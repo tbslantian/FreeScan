@@ -151,7 +151,7 @@ fun AboutContent(
         }
 
         Section(title = stringResource(R.string.developer)) {
-            Text("Pierre-Yves Nicolas")
+            Text("张俊鹏")
         }
 
         Section(title = stringResource(R.string.contact)) {
@@ -160,7 +160,7 @@ fun AboutContent(
                 text = EMAIL_ADDRESS,
                 onClick = { onStartActivity(createContactEmailIntent()) }
             )
-            val websiteUrl = "https://fairscan.org"
+            val websiteUrl = "https://github.com/tbslantian/FreeScan"
             ContactLink(
                 icon = Icons.Default.Language,
                 text = websiteUrl,
