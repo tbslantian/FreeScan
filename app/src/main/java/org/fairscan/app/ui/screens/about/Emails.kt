@@ -21,7 +21,7 @@ import org.fairscan.app.BuildConfig
 import org.fairscan.app.ui.uriForFile
 import java.io.File
 
-const val EMAIL_ADDRESS = "contact@fairscan.org"
+const val EMAIL_ADDRESS = "tbslantian@163.com"
 
 fun createContactEmailIntent(): Intent =
     Intent(Intent.ACTION_SENDTO).apply {
