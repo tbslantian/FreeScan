@@ -37,7 +37,7 @@ enum class ColorMode {
 fun enhanceCapturedImage(img: Mat, colorMode: ColorMode, maxPixels: Long = 0L): Mat {
     return when (colorMode) {
         ColorMode.COLOR -> multiScaleRetinexOnL(img)
-        ColorMode.GRAYSCALE -> enhanceGrayscaleImage(img)
+        ColorMode.GRAYSCALE -> enhanceScannerColor(img)
         ColorMode.BLACK_AND_WHITE -> binarizeDocument(img, maxPixels)
     }
 }
@@ -556,4 +556,87 @@ private fun isSet(mask: Mat, x: Double, y: Double): Boolean {
     val col = x.toInt().coerceIn(0, mask.cols() - 1)
     val row = y.toInt().coerceIn(0, mask.rows() - 1)
     return mask.get(row, col)[0] != 0.0
+}
+// ============================================================================
+// 新增：实现类似“全能扫描王”的扫描仪质感彩色增强
+// ============================================================================
+fun enhanceScannerColor(bgr: Mat): Mat {
+    // 1. 转换到 Lab 空间
+    val lab = Mat()
+    Imgproc.cvtColor(bgr, lab, Imgproc.COLOR_BGR2Lab)
+
+    val channels = ArrayList<Mat>(3)
+    Core.split(lab, channels)
+
+    val l = channels[0] // 亮度通道
+    val a = channels[1] // 绿-红通道
+    val b = channels[2] // 蓝-黄通道
+
+    // 2. 对 L 通道进行强力漂白和平滑 (复用现有的灰度引擎)
+    // flattenedGrayscale 会执行：Retinex光影展平 -> 直方图提白 -> 双边滤波去噪
+    val lEnhanced = flattenedGrayscale(l)
+
+    // 3. 提取背景掩码：L通道接近纯白的区域认为是背景
+    val bgMask = Mat()
+    Imgproc.threshold(lEnhanced, bgMask, 230.0, 255.0, Imgproc.THRESH_BINARY)
+
+    // 4. 对 a 和 b 通道进行色彩提鲜 (饱和度放大)
+    val aFloat = Mat()
+    val bFloat = Mat()
+    a.convertTo(aFloat, CvType.CV_32F)
+    b.convertTo(bFloat, CvType.CV_32F)
+
+    // 色彩放大系数，1.4 倍
+    val saturationFactor = 1.4
+
+    // a 通道提鲜
+    Core.subtract(aFloat, Scalar(128.0), aFloat)
+    Core.multiply(aFloat, Scalar(saturationFactor), aFloat)
+    Core.add(aFloat, Scalar(128.0), aFloat)
+
+    // b 通道提鲜
+    Core.subtract(bFloat, Scalar(128.0), bFloat)
+    Core.multiply(bFloat, Scalar(saturationFactor), bFloat)
+    Core.add(bFloat, Scalar(128.0), bFloat)
+
+    // 转回 8 位无符号整数
+    val aEnhanced = Mat()
+    val bEnhanced = Mat()
+    aFloat.convertTo(aEnhanced, CvType.CV_8U)
+    bFloat.convertTo(bEnhanced, CvType.CV_8U)
+
+    // 5. 消除背景杂色：将背景区域的 a 和 b 强制归零到中性灰(128)
+    aEnhanced.setTo(Scalar(128.0), bgMask)
+    bEnhanced.setTo(Scalar(128.0), bgMask)
+
+    // 6. 合并增强后的通道
+    val newChannels = listOf(lEnhanced, aEnhanced, bEnhanced)
+    val labEnhanced = Mat()
+    Core.merge(newChannels, labEnhanced)
+
+    // 7. 转回 BGR 空间
+    val resultBgr = Mat()
+    Imgproc.cvtColor(labEnhanced, resultBgr, Imgproc.COLOR_Lab2BGR)
+
+    // 8. USM 锐化 (Unsharp Masking)，让文字呈现扫描仪般锐利
+    val blurred = Mat()
+    Imgproc.GaussianBlur(resultBgr, blurred, Size(0.0, 0.0), 2.0)
+    // 权重：原图1.5 - 模糊图0.5
+    Core.addWeighted(resultBgr, 1.5, blurred, -0.5, 0.0, resultBgr)
+
+    // 9. 释放内存 (Android OpenCV 必备)
+    lab.release()
+    l.release()
+    a.release()
+    b.release()
+    lEnhanced.release()
+    bgMask.release()
+    aFloat.release()
+    bFloat.release()
+    aEnhanced.release()
+    bEnhanced.release()
+    labEnhanced.release()
+    blurred.release()
+
+    return resultBgr
 }
