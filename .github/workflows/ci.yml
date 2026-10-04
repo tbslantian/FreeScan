@@ -36,7 +36,4 @@ jobs:
       - name: Upload APKs
         uses: actions/upload-artifact@v4
         with:
-          name: FairScan-APKs
-          path: |
-            app/build/outputs/apk/release/*.apk
-          retention-days: 30
+          name: Freescan-APKs
