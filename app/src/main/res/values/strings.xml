@@ -4,7 +4,7 @@
     <!-- Button in the Document screen -->
     <string name="add_page">Add page</string>
     <!-- Header in the About screen -->
-    <string name="app_name" translatable="false">FairScan</string>
+    <string name="app_name" translatable="false">FreeScan</string>
     <!--
     Appears in the About screen.
     "Simple" means easy to use, with no unnecessary complexity. You can scan a document and get a PDF in just a few seconds.
