@@ -36,7 +36,7 @@ enum class ColorMode {
 
 fun enhanceCapturedImage(img: Mat, colorMode: ColorMode, maxPixels: Long = 0L): Mat {
     return when (colorMode) {
-        ColorMode.COLOR -> multiScaleRetinexOnL(img)
+        ColorMode.COLOR -> enhanceScannerColor(img)
         ColorMode.GRAYSCALE -> enhanceScannerColor(img)
         ColorMode.BLACK_AND_WHITE -> binarizeDocument(img, maxPixels)
     }
