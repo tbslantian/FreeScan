@@ -42,4 +42,6 @@ data class CameraUiState(
     val isLandscape: Boolean,
     val isDebugMode: Boolean,
     val isTorchEnabled: Boolean,
+    val flashMode: Int = 0,
+    val resolutionMode: Int = 2,
 )
