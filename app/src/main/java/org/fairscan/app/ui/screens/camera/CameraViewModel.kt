@@ -68,6 +68,14 @@ class CameraViewModel(appContainer: AppContainer): ViewModel() {
     private val _isTorchEnabled = MutableStateFlow(false)
     val isTorchEnabled: StateFlow<Boolean> = _isTorchEnabled
 
+    // 0: Auto, 1: On, 2: Off
+    private val _flashMode = MutableStateFlow(0)
+    val flashMode: StateFlow<Int> = _flashMode
+
+    // 0: SD, 1: HD, 2: 4K
+    private val _resolutionMode = MutableStateFlow(2)
+    val resolutionMode: StateFlow<Int> = _resolutionMode
+
     private val _volumeKeyEvent = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     val volumeKeyEvent = _volumeKeyEvent.asSharedFlow()
 
@@ -194,6 +202,14 @@ class CameraViewModel(appContainer: AppContainer): ViewModel() {
 
     fun setTorchEnabled(enabled: Boolean) {
         _isTorchEnabled.value = enabled
+    }
+
+    fun cycleFlashMode() {
+        _flashMode.value = (_flashMode.value + 1) % 3
+    }
+
+    fun cycleResolutionMode() {
+        _resolutionMode.value = (_resolutionMode.value + 1) % 3
     }
 
     fun importPhotos(uris: List<Uri>) {
