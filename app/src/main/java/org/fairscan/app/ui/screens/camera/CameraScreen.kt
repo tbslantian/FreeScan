@@ -48,6 +48,12 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.FlashAuto
+import androidx.compose.material.icons.filled.FlashOff
+import androidx.compose.material.icons.filled.FlashOn
+import androidx.compose.material.icons.filled.Hd
+import androidx.compose.material.icons.filled.Sd
+import androidx.compose.material.icons.filled.FourK
 import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.Done
 import androidx.compose.material.icons.filled.Highlight
@@ -138,6 +144,8 @@ fun CameraScreen(
     val thumbnailCoords = remember { mutableStateOf(Offset.Zero) }
     var isDebugMode by remember { mutableStateOf(false) }
     val isTorchEnabled by cameraViewModel.isTorchEnabled.collectAsStateWithLifecycle()
+    val flashMode by cameraViewModel.flashMode.collectAsStateWithLifecycle()
+    val resolutionMode by cameraViewModel.resolutionMode.collectAsStateWithLifecycle()
     var torchReapplied by remember { mutableStateOf(false) }
 
     val captureController = remember { CameraCaptureController() }
@@ -233,20 +241,30 @@ fun CameraScreen(
                 showPageNumbers = false,
                 onLastItemPosition = { offset -> thumbnailCoords.value = offset },
             ),
-        cameraUiState = CameraUiState(
-            document.pageCount(),
-            liveAnalysisState,
-            captureState,
-            importState,
-            showDetectionError,
-            isLandscape = isLandscape,
-            isDebugMode,
-            isTorchEnabled),
+            cameraUiState = CameraUiState(
+                document.pageCount(),
+                liveAnalysisState,
+                captureState,
+                importState,
+                showDetectionError,
+                isLandscape = isLandscape,
+                isDebugMode = isDebugMode,
+                isTorchEnabled = isTorchEnabled,
+                flashMode = flashMode,
+                resolutionMode = resolutionMode
+            ),
         onCapture = onCapture,
         onFinalizePressed = onFinalizePressed,
         onDebugModeSwitched = { isDebugMode = !isDebugMode },
         onTorchSwitched = {
             cameraViewModel.setTorchEnabled(!isTorchEnabled)
+        },
+        onFlashModeSwitched = {
+            cameraViewModel.cycleFlashMode()
+            captureController.setFlashMode(cameraViewModel.flashMode.value)
+        },
+        onResolutionModeSwitched = {
+            cameraViewModel.cycleResolutionMode()
         },
         thumbnailCoords = thumbnailCoords,
         navigation = navigation,
@@ -266,6 +284,8 @@ private fun CameraScreenScaffold(
     onFinalizePressed: () -> Unit,
     onDebugModeSwitched: () -> Unit,
     onTorchSwitched: () -> Unit,
+    onFlashModeSwitched: () -> Unit,
+    onResolutionModeSwitched: () -> Unit,
     thumbnailCoords: MutableState<Offset>,
     navigation: Navigation,
     captureController: CameraCaptureController,
@@ -317,6 +337,8 @@ private fun CameraScreenScaffold(
                     focusPoint,
                     onCapture,
                     onTorchSwitched,
+                    onFlashModeSwitched,
+                    onResolutionModeSwitched,
                     modifier.pointerInput(Unit) {
                         detectTapGestures { offset ->
                             focusPoint = offset
@@ -378,6 +400,8 @@ private fun CameraPreviewBox(
     focusPoint: Offset?,
     onCapture: () -> Unit,
     onTorchSwitched: () -> Unit,
+    onFlashModeSwitched: () -> Unit,
+    onResolutionModeSwitched: () -> Unit,
     modifier: Modifier,
 ) {
     Box(
@@ -398,17 +422,51 @@ private fun CameraPreviewBox(
                 .align(Alignment.BottomCenter)
                 .padding(16.dp)
         )
-        IconButton(
-            onClick = onTorchSwitched,
-            modifier = Modifier.align(Alignment.BottomStart)
+        Row(
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .padding(bottom = 16.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            val torchEnabled = cameraUiState.isTorchEnabled
+            IconButton(onClick = onTorchSwitched) {
+                val torchEnabled = cameraUiState.isTorchEnabled
+                Icon(
+                    imageVector = Icons.Default.Highlight,
+                    contentDescription =
+                        stringResource(
+                            if (torchEnabled) R.string.turn_off_torch else R.string.turn_on_torch),
+                    tint = if (torchEnabled) Color.White else Color.White.copy(alpha = 0.5f)
+                )
+            }
+            IconButton(onClick = onFlashModeSwitched) {
+                val icon = when (cameraUiState.flashMode) {
+                    1 -> Icons.Default.FlashOn
+                    2 -> Icons.Default.FlashOff
+                    else -> Icons.Default.FlashAuto
+                }
+                Icon(
+                    imageVector = icon,
+                    contentDescription = "Flash mode",
+                    tint = Color.White
+                )
+            }
+        }
+        
+        IconButton(
+            onClick = onResolutionModeSwitched,
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(bottom = 16.dp)
+        ) {
+            val icon = when (cameraUiState.resolutionMode) {
+                0 -> Icons.Default.Sd
+                1 -> Icons.Default.Hd
+                else -> Icons.Default.FourK
+            }
             Icon(
-                imageVector = Icons.Default.Highlight,
-                contentDescription =
-                    stringResource(
-                        if (torchEnabled) R.string.turn_off_torch else R.string.turn_on_torch),
-                tint = if (torchEnabled) Color.White else Color.White.copy(alpha = 0.5f)
+                imageVector = icon,
+                contentDescription = "Resolution mode",
+                tint = Color.White
             )
         }
     }
@@ -721,6 +779,8 @@ private fun ScreenPreview(
             onFinalizePressed = {},
             onDebugModeSwitched = {},
             onTorchSwitched = {},
+            onFlashModeSwitched = {},
+            onResolutionModeSwitched = {},
             thumbnailCoords = thumbnailCoords,
             navigation = dummyNavigation(),
             captureController = CameraCaptureController(),
