@@ -205,8 +205,8 @@ fun bindCameraUseCases(
             ResolutionSelector.Builder()
                 .setResolutionStrategy(
                     ResolutionStrategy(
-                        Size(4400, 3300),
-                        ResolutionStrategy.FALLBACK_RULE_CLOSEST_LOWER_THEN_HIGHER
+                        Size(4000, 3000), // 12MP 4:3 high quality
+                        ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER
                     )
                 )
                 .setAspectRatioStrategy(
@@ -214,7 +214,7 @@ fun bindCameraUseCases(
                 )
                 .build()
         )
-        .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+        .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
 
     Camera2Interop.Extender(imageCaptureBuilder)
         .setSessionCaptureCallback(object : CameraCaptureSession.CaptureCallback() {
@@ -324,6 +324,14 @@ class CameraCaptureController {
 
     fun shutdown() {
         executor.shutdown()
+    }
+
+    fun setFlashMode(mode: Int) {
+        imageCapture?.flashMode = when (mode) {
+            1 -> ImageCapture.FLASH_MODE_ON
+            2 -> ImageCapture.FLASH_MODE_OFF
+            else -> ImageCapture.FLASH_MODE_AUTO
+        }
     }
 
     fun takePicture(onImageCaptured: (ImageProxy?, OpticalMeasures?) -> Unit) {
