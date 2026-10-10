@@ -27,8 +27,8 @@ FairScan is an Android app to **scan documents quickly, easily and privately**.
 It's designed to be **simple**: users get a clean, shareable PDF in seconds, with no manual adjustments.<br>
 And **respectful**: open source, minimal permissions, no tracking, no ads.
 
-- Website: https://fairscan.org  
-- Blog: https://fairscan.org/blog/
+- Website: (https://github.com/tbslantian/FreeScan/)
+
 
 ---
 
