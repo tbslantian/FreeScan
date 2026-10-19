@@ -1,5 +1,9 @@
 # FreeScan
 
+<p align="center">
+  <img src="app/src/main/ic_launcher-playstore.png" alt="FreeScan 应用图标" width="160" />
+</p>
+
 FreeScan 是一款基于开源项目 [FairScan](https://github.com/pynicolas/fairscan) 二次开发的 Android 文档扫描应用。它提供文档扫描、页面调整、PDF 导出和本地图片工具。
 
 ## 功能
