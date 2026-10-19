@@ -1,0 +1,1 @@
+New experimental feature: allow other apps to use FreeScan to scan documents and generate PDFs.

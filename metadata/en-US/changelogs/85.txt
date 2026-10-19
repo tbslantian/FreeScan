@@ -1,0 +1,1 @@
+Version 2.0 adds text recognition (OCR), allowing FreeScan to create searchable PDFs.

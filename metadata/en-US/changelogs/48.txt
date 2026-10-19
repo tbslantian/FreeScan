@@ -1,0 +1,2 @@
+- Fix crash when FreeScan is used via external apps
+- Add translation: Turkish

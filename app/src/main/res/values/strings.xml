@@ -1,0 +1,335 @@
+<resources>
+    <!-- About screen: title. It's also an item of the ⋮ menu -->
+    <string name="about">About</string>
+    <!-- Button in the Document screen -->
+    <string name="add_page">Add page</string>
+    <!-- Header in the About screen -->
+    <string name="app_name" translatable="false">Freescan</string>
+    <!--
+    Appears in the About screen.
+    "Simple" means easy to use, with no unnecessary complexity. You can scan a document and get a PDF in just a few seconds.
+    "Respectful" is not only about privacy, but also: no ads, no tracking, no artificial limitations (e.g. watermark), minimal permissions...
+    Please preserve the broad meaning of "respectful". It is a key part of Freescan's philosophy and should not be translated as "privacy-friendly" only.
+    -->
+    <string name="app_tagline">A simple and respectful application to scan your documents.</string>
+    <!-- Button in the Crop screen -->
+    <string name="apply">Apply</string>
+    <string name="erase_tool">Erase unwanted marks</string>
+    <string name="eraser_brush_size_value">Brush: %1$d dp</string>
+    <string name="eraser_undo">Undo</string>
+    <string name="eraser_clear">Clear marks</string>
+    <string name="eraser_repair">Repair</string>
+    <string name="eraser_processing">Repairing…</string>
+    <string name="eraser_saving">Saving…</string>
+    <string name="eraser_continue_painting">Continue painting</string>
+    <string name="eraser_apply">Apply result</string>
+    <string name="repair_preview">Repair preview</string>
+    <string name="shadow_removal">Remove shadows</string>
+    <string name="shadow_removal_description">Brighten the paper while preserving text detail</string>
+    <!-- Icon description for ← at the top-left -->
+    <string name="back">Back</string>
+    <!-- Export screen, only when the output format is JPEG and the document has black & white pages -->
+    <string name="black_and_white_jpeg_hint">Black &amp; white pages would be smaller and sharper if exported as PDF.</string>
+    <!-- Error message (as a toast) -->
+    <string name="camera_permission_denied">Camera permission was denied</string>
+    <string name="camera_unavailable">Camera unavailable</string>
+    <string name="camera_unavailable_hint">Check camera access in system settings and close other apps using the camera, then retry.</string>
+    <string name="retry_camera">Retry</string>
+    <!-- Appears on the Camera screen -->
+    <string name="camera_permission_rationale">The app requires camera access to scan documents. Captured images are stored only on this device and will be deleted when you close the current scan.</string>
+    <!-- Button in dialogs -->
+    <string name="cancel">Cancel</string>
+    <!-- Icon description 🗁 -->
+    <string name="change_directory">Change folder</string>
+    <!-- Icon description ✖ in the filename field of the Export screen -->
+    <string name="clear_text">Clear text</string>
+    <!-- Button in OCR download dialog -->
+    <string name="close">Close</string>
+    <!-- Icon description in the Document screen -->
+    <string name="color_mode">Filter</string>
+    <!-- Settings screen -->
+    <string name="color_mode_auto">Automatic</string>
+    <!-- Settings screen: value for "default filter". Document screen: dropdown menu for filter.
+         Pure black and white, not grayscale, which is a separate value. -->
+    <string name="color_mode_black_and_white">Black &amp; white</string>
+    <!-- Settings screen: value for "default filter". Document screen: dropdown menu for filter -->
+    <string name="color_mode_color">Color</string>
+    <string name="color_mode_original">Original (crop only)</string>
+    <!-- Settings screen -->
+    <string name="color_mode_default">Default filter</string>
+    <!-- Settings screen: value for "default filter". Document screen: dropdown menu for filter -->
+    <string name="color_mode_grayscale">Grayscale</string>
+    <string name="color_mode_local_brightness">Brighten</string>
+    <string name="color_mode_local_enhanced">Document enhance</string>
+    <string name="color_mode_local_grayscale">Enhanced grayscale</string>
+    <string name="color_mode_local_soft">Soft color</string>
+    <string name="color_mode_ai_enhanced">AI enhanced</string>
+    <!-- About screen -->
+    <string name="contact">Contact</string>
+    <!-- About screen: appears as a toast -->
+    <string name="copied_logs">Logs copied to clipboard</string>
+    <!-- About screen -->
+    <string name="copy_logs">Copy logs</string>
+    <!-- Export screen: progress message -->
+    <string name="creating_export">Preparing export…</string>
+    <!-- Icon description in the Document screen -->
+    <string name="crop">Crop</string>
+    <!-- Icon description in the OCR languages screen -->
+    <string name="delete">Delete</string>
+    <!-- Document screen: icon description and title of a confirmation dialog -->
+    <string name="delete_page">Delete page</string>
+    <!-- Document screen: confirmation dialog -->
+    <string name="delete_page_warning">Do you want to delete this page?</string>
+    <!-- About screen -->
+    <string name="developer">Developer</string>
+    <!-- Localized name of the Android Download folder as it appears in the Files app (it ends with an "s" in English...)-->
+    <string name="download_dirname">Downloads</string>
+    <!-- Export screen -->
+    <string name="error_context_folder">Export folder: %1$s</string>
+    <!-- Export screen, %1$s is the provider name -->
+    <string name="error_context_provider">Provider: %1$s</string>
+    <!-- Export screen -->
+    <string name="error_export_dir_permission_lost">The selected export folder is no longer accessible. Please choose another folder.</string>
+    <!-- Rare error messages should not be translated -->
+    <string name="error_file_picker_launch" translatable="false">Failed to launch system file picker on this device</string>
+    <string name="error_file_picker_result" translatable="false">Failed to set export directory</string>
+    <!-- Export screen: appears as a toast -->
+    <string name="error_no_app">No app found to open this file</string>
+    <!-- Generic message for unexpected errors in various screens: appears as a toast -->
+    <string name="error_occurred">An error occurred</string>
+    <!-- Export screen -->
+    <string name="error_save">Failed to save file</string>
+    <!-- Document screen: button -->
+    <string name="export">Export</string>
+    <!-- Export screen: title (%1$s is the export format: PDF, JPEG...) -->
+    <string name="export_as">Export as %1$s</string>
+    <!-- Settings screen -->
+    <string name="export_directory">Export folder</string>
+    <!-- Settings screen -->
+    <string name="export_folder_permission_lost">Folder access lost</string>
+    <!-- Settings screen -->
+    <string name="export_format">Export format</string>
+    <!-- Settings screen -->
+    <string name="export_quality">Export quality</string>
+    <!-- Settings screen: one of the values for "export quality" -->
+    <string name="export_quality_low">Low</string>
+    <!-- Settings screen: one of the values for "export quality" -->
+    <string name="export_quality_balanced">Balanced</string>
+    <!-- Settings screen: one of the values for "export quality" -->
+    <string name="export_quality_high">High</string>
+    <string name="scan_resolution_1080p">1080p</string>
+    <string name="scan_resolution_2k">2K</string>
+    <string name="scan_resolution_4k">4K</string>
+    <string name="multi_frame_disabled">Multi-frame off</string>
+    <string name="multi_frame_enabled">3-frame sharpness pick</string>
+    <string name="camera_title">Freescan</string>
+    <string name="auto_crop_enabled">Auto crop on</string>
+    <string name="flash_mode">Flash mode</string>
+    <string name="camera_settings">Scan settings</string>
+    <string name="auto_crop">Automatic document crop</string>
+    <string name="setting_on">On</string>
+    <string name="setting_off">Off</string>
+    <string name="scan_resolution">Scan resolution</string>
+    <string name="flash_auto">Auto</string>
+    <string name="flash_on">On</string>
+    <string name="flash_off">Off</string>
+    <string name="torch">Torch</string>
+    <!-- Export screen when exporting 1 file-->
+    <string name="file_size">File size: %1$s</string>
+    <!-- Export screen when exporting more than 1 file -->
+    <string name="file_size_total">Total size: %1$s</string>
+    <!-- Export screen: field label -->
+    <string name="filename">Filename</string>
+    <!-- Camera screen: button -->
+    <string name="grant_permission">Grant permission</string>
+    <!-- Camera screen: button -->
+    <string name="import_photos">Import</string>
+    <!-- About screen -->
+    <string name="libraries">Libraries</string>
+    <!-- Libraries screen title (reachable from the About screen) -->
+    <string name="libraries_open_source">Open-source libraries</string>
+    <!-- About screen -->
+    <string name="license">License</string>
+    <!-- About screen -->
+    <string name="licensed_under">This application is licensed under the GNU General Public License v3.0.</string>
+    <!-- Icon description for ⋮ -->
+    <string name="menu">Menu</string>
+    <!-- Export screen: dialog -->
+    <string name="new_document_warning">The current scan will be lost. Do you want to continue?</string>
+    <!-- Export screen: button -->
+    <string name="open">Open</string>
+    <!-- Export screen: text passed to the Android system when opening a file -->
+    <string name="open_file">Open file</string>
+    <!-- Settings screen: when a non-default export folder is chosen -->
+    <string name="reset_to_default">Reset to default</string>
+    <!-- Document screen: icon description -->
+    <string name="rotate_left">Rotate left</string>
+    <!-- Document screen: icon description -->
+    <string name="rotate_right">Rotate right</string>
+    <!-- Export screen: button -->
+    <string name="print">Print</string>
+    <!-- Export screen: button -->
+    <string name="save">Save</string>
+    <!-- Export screen: button. Resume scan screen: button -->
+    <string name="scan_new">New Scan</string>
+    <!-- Resume scan screen -->
+    <string name="scan_current">Current scan</string>
+    <!-- Resume scan screen -->
+    <string name="scan_discard_current">Discard the current scan</string>
+    <!-- Resume scan screen: button -->
+    <string name="scan_resume">Resume scan</string>
+    <!-- Settings screen: title. It's also an item of the ⋮ menu -->
+    <string name="settings">Settings</string>
+    <!-- OCR Languages screen -->
+    <string name="settings_ocr_download_error">Download failed. Check your internet connection and that network access is allowed for this app.</string>
+    <!-- OCR Languages screen -->
+    <string name="settings_ocr_download_intro">"Language files are downloaded from the official Tesseract project. Text recognition remains fully offline."</string>
+    <!-- OCR Languages screen -->
+    <string name="settings_ocr_downloading">Downloading language file</string>
+    <!-- OCR Languages screen: title -->
+    <string name="settings_ocr_languages">Languages</string>
+    <!-- OCR Languages screen -->
+    <string name="settings_ocr_languages_available">Available languages</string>
+    <!-- Settings screen -->
+    <string name="settings_ocr_languages_disabled">Disabled</string>
+    <!-- OCR Languages screen -->
+    <string name="settings_ocr_languages_installed">Installed</string>
+    <!-- OCR Languages screen. Marks the language matching the user's display language. At most one language is suggested. -->
+    <string name="settings_ocr_suggested">Suggested</string>
+    <!-- Settings screen: section title -->
+    <string name="settings_section_ocr">Text recognition</string>
+    <!-- Settings screen: section title -->
+    <string name="settings_section_scan">Scan</string>
+    <!-- Settings screen: section title -->
+    <string name="settings_section_export">Export</string>
+    <!-- Export screen: button -->
+    <string name="share">Share</string>
+    <!-- Export screen: text passed to the Android system when sharing a file -->
+    <string name="share_document">Share document</string>
+    <!-- Export screen -->
+    <string name="storage_permission_denied">Cannot save file: permission was denied</string>
+    <!-- About screen -->
+    <string name="support">Support</string>
+    <!-- About screen -->
+    <string name="support_last_image">Report a problem with last captured image</string>
+    <!-- Export screen -->
+    <string name="text_recognition_disabled">Text recognition: disabled</string>
+    <!-- Export screen -->
+    <string name="text_recognition_enabled">Text recognition: enabled</string>
+    <!-- Camera screen -->
+    <string name="turn_off_torch">Turn off torch</string>
+    <!-- Camera screen -->
+    <string name="turn_on_torch">Turn on torch</string>
+    <!-- Export screen -->
+    <string name="unknown_size">Unknown size</string>
+    <!-- About screen -->
+    <string name="version">Version</string>
+    <!-- About screen -->
+    <string name="view_full_list">View full list</string>
+    <!-- About screen -->
+    <string name="view_the_full_license">View the full license</string>
+    <!-- Dialogs: button -->
+    <string name="yes">Yes</string>
+    <!-- Export screen. %1$d: number of files; %2$s: file name; %3$s: folder name -->
+    <plurals name="files_saved_to">
+        <item quantity="one">%2$s saved to %3$s</item>
+        <item quantity="other">%1$d files saved to %3$s</item>
+    </plurals>
+    <!-- Camera screen. %d: number of photos -->
+    <plurals name="importing_photos">
+        <item quantity="one">Importing 1 photo</item>
+        <item quantity="other">Importing %d photos</item>
+    </plurals>
+    <!-- Camera screen, Export screen, Resume scan screen. %d: number of pages -->
+    <plurals name="page_count">
+        <item quantity="one">%d page</item>
+        <item quantity="other">%d pages</item>
+    </plurals>
+    <string name="home_title">Home</string>
+    <string name="home_welcome">Clear scans start here</string>
+    <string name="home_description">Capture paper documents and turn them into clear PDFs.</string>
+    <string name="home_start_scan">Start scanning</string>
+    <string name="home_remove_quark_watermark">Remove watermark and QR code</string>
+    <string name="home_watermark_hint">Process a PDF or image locally</string>
+    <string name="home_tools">Quick actions</string>
+    <string name="home_paper_eraser">Exam paper eraser</string>
+    <string name="home_paper_eraser_hint">Brush away marks on your device</string>
+    <string name="home_paper_eraser_badge">Local repair</string>
+    <string name="home_certificate_scan">Certificate scan</string>
+    <string name="home_certificate_scan_hint">Scan both sides with automatic edge detection and cropping</string>
+    <string name="certificate_scan_front">Front side · card %1$d</string>
+    <string name="certificate_scan_back">Back side · card %1$d</string>
+    <string name="certificate_scan_guide_auto">Align the document guide · Auto crop on</string>
+    <string name="certificate_scan_guide_manual">Align the document guide · Manual crop</string>
+    <string name="certificate_template_single_card">Single card</string>
+    <string name="certificate_template_id_card">ID card</string>
+    <string name="certificate_template_double_card">Card(double)</string>
+    <string name="certificate_template_household_register">Household register</string>
+    <string name="certificate_template_household_register_double">Hukou(double)</string>
+    <string name="certificate_template_business_license">Business license</string>
+    <string name="certificate_template_passport">Passport</string>
+    <string name="certificate_template_driver_license">Driver\'s license</string>
+    <string name="certificate_template_vehicle_license">Vehicle License</string>
+    <string name="paper_eraser_title">Exam paper eraser</string>
+    <string name="paper_eraser_hint">Remove colored ink or paint over an area manually. Processing stays on this device.</string>
+    <string name="paper_eraser_auto_color">Remove colored ink</string>
+    <string name="paper_eraser_auto_hint">Color based; colored print may also be removed. Paint over black ink manually.</string>
+    <string name="paper_eraser_auto_no_ink">No obvious colored ink found, or the colored area is too large. Paint over the area manually.</string>
+    <string name="paper_eraser_compare_hint">Press and hold the image to see the original; release to see the repair.</string>
+    <string name="paper_eraser_before">Original</string>
+    <string name="paper_eraser_after">Repaired</string>
+    <string name="paper_eraser_brush">Brush size: %1$d</string>
+    <string name="paper_eraser_repair_failed">Repair failed. Try painting a smaller area.</string>
+    <string name="paper_eraser_continue">Continue painting</string>
+    <string name="eraser_redo">Redo</string>
+    <string name="local_tool_load_failed">Could not read the selected image</string>
+    <string name="local_tool_save_failed">Save failed. Check available storage and try again.</string>
+    <string name="local_tool_save">Save image</string>
+    <string name="local_tool_saved">Saved to Pictures/Freescan</string>
+    <string name="quark_watermark_processing">Processing file…</string>
+    <string name="quark_watermark_success">Saved %1$s to Download/Freescan. Removed %2$d region(s) on %3$d of %4$d page(s).</string>
+    <string name="watermark_select_regions">Select regions</string>
+    <string name="watermark_page_progress">Page %1$d of %2$d</string>
+    <string name="watermark_detecting">Detecting QR codes and Quark marks…</string>
+    <string name="watermark_repairing">Repairing selected regions…</string>
+    <string name="watermark_saving">Saving file…</string>
+    <string name="watermark_cancel">Cancel</string>
+    <string name="watermark_selection_hint">Green boxes will be erased. Yellow QR candidates could not be verified and are off by default; tap to include one. Use Add box for missed codes or nearby logos.</string>
+    <string name="watermark_pdf_note">Modified PDF pages become images; unchanged pages retain their text.</string>
+    <string name="watermark_all">Whole page</string>
+    <string name="watermark_edges">Page edges</string>
+    <string name="watermark_add_box">Add box</string>
+    <string name="watermark_undo_box">Undo box</string>
+    <string name="watermark_selection_count">%1$d region(s) selected</string>
+    <string name="watermark_preview">Preview repair</string>
+    <string name="watermark_original">Original</string>
+    <string name="watermark_skip_page">Skip</string>
+    <string name="watermark_next_page">Next page</string>
+    <string name="watermark_save">Save</string>
+    <string name="quark_watermark_failed">Could not process file: %1$s</string>
+    <string name="home_continue_scan">Continue unfinished scan</string>
+    <string name="home_pending_pages">%1$d pages in progress</string>
+    <string name="home_recent">Recent PDFs</string>
+    <string name="home_view_all">View all</string>
+    <string name="home_empty_recent">Saved PDFs will appear here.</string>
+    <string name="documents_title">Documents</string>
+    <string name="documents_search">Search PDFs</string>
+    <string name="documents_empty">No PDFs found</string>
+    <string name="documents_empty_hint">Choose a PDF from your device to edit its pages.</string>
+    <string name="documents_actions">Document actions</string>
+    <string name="documents_edit">Edit PDF</string>
+    <string name="documents_replace_draft_title">Replace unfinished scan?</string>
+    <string name="documents_replace_draft_message">Opening this PDF for editing will replace the current unfinished scan. The saved PDF will stay unchanged.</string>
+    <string name="documents_importing_title">Opening PDF for editing</string>
+    <string name="documents_importing_progress">Preparing page %1$d of %2$d…</string>
+    <string name="documents_import_failed">Could not open this PDF for editing. Check that the file is available and not password protected.</string>
+    <string name="documents_view_original">View original PDF</string>
+    <string name="documents_share">Share</string>
+    <string name="documents_delete">Delete</string>
+    <string name="documents_remove">Remove from list</string>
+    <string name="documents_confirm_delete">Delete “%1$s” from its folder?</string>
+    <string name="documents_confirm_remove">Remove “%1$s” from recent documents? The original file will remain.</string>
+    <string name="documents_delete_success">Document deleted</string>
+    <string name="documents_remove_success">Removed from the list</string>
+    <string name="documents_delete_failed">Could not delete the document. Check file permissions.</string>
+</resources>
