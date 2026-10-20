@@ -33,8 +33,31 @@ jobs:
           sed -i 's/\r$//' gradlew
           chmod +x gradlew
 
-      - name: Run Gradle
-        run: ./gradlew clean license check assembleRelease --no-daemon
+      - name: Run signed Release Gradle build
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for name in RELEASE_KEYSTORE_BASE64 RELEASE_STORE_PASSWORD RELEASE_KEY_ALIAS RELEASE_KEY_PASSWORD; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Missing GitHub Actions secret $name"
+              exit 1
+            fi
+          done
+
+          umask 077
+          printf '%s' "$RELEASE_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/freescan-release.jks"
+          test -s "$RUNNER_TEMP/freescan-release.jks"
+
+          export ORG_GRADLE_PROJECT_RELEASE_STORE_FILE="$RUNNER_TEMP/freescan-release.jks"
+          export ORG_GRADLE_PROJECT_RELEASE_STORE_PASSWORD="$RELEASE_STORE_PASSWORD"
+          export ORG_GRADLE_PROJECT_RELEASE_KEY_ALIAS="$RELEASE_KEY_ALIAS"
+          export ORG_GRADLE_PROJECT_RELEASE_KEY_PASSWORD="$RELEASE_KEY_PASSWORD"
+
+          ./gradlew clean license check assembleRelease --no-daemon
 
       - name: Upload APKs
         uses: actions/upload-artifact@v6
