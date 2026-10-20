@@ -36,13 +36,15 @@ class NavigationTest {
         val atCamera = NavigationState.initial(startAtHome = false)
         val atDocument = atCamera.navigateTo(Document())
         val atExport = atCamera.navigateTo(Export)
+        val atDocumentExport = atDocument.navigateTo(Export)
 
         assertThat(atCamera.current).isEqualTo(Camera)
         assertThat(atDocument.current).isEqualTo(Document())
         assertThat(atExport.current).isEqualTo(Export)
 
         assertThat(atCamera.navigateTo(Document())).isEqualTo(atDocument)
-        assertThat(atDocument.navigateTo(Export)).isEqualTo(atExport)
+        assertThat(atDocumentExport.current).isEqualTo(Export)
+        assertThat(atDocumentExport.navigateBack()).isEqualTo(atDocument)
         assertThat(atDocument.navigateTo(Camera)).isEqualTo(atCamera)
 
         assertThat(atCamera.navigateBack()).isEqualTo(atCamera)
