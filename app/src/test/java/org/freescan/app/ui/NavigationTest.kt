@@ -26,14 +26,14 @@ class NavigationTest {
 
     @Test
     fun empty_ScreenStack() {
-        val empty = NavigationState.initial()
+        val empty = NavigationState.initial(startAtHome = false)
         assertThat(empty.current).isEqualTo(Camera)
         assertThat(empty.navigateBack()).isEqualTo(empty)
     }
 
     @Test
     fun navigate_between_fixed_screens() {
-        val atCamera = NavigationState.initial()
+        val atCamera = NavigationState.initial(startAtHome = false)
         val atDocument = atCamera.navigateTo(Document())
         val atExport = atCamera.navigateTo(Export)
 
@@ -70,7 +70,7 @@ class NavigationTest {
 
     @Test
     fun external_call() {
-        val initial = NavigationState.initial()
+        val initial = NavigationState.initial(startAtHome = false)
         assertThat(initial.current).isEqualTo(Camera)
         assertThat(initial.navigateBack().current).isEqualTo(Camera)
     }
