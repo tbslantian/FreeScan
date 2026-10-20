@@ -14,7 +14,11 @@ val generatedAssetsDir = layout.buildDirectory.dir("generated/assets")
 val downloadTFLiteModel = tasks.register("downloadTFLiteModel") {
     val localModelFile = localModelPath.asFile
     val outputFile = downloadedModelPath.get().asFile
-    inputs.file(localModelFile).optional()
+    // A missing local override is expected in CI. Optional input properties still
+    // validate any configured path, so only expose the file when it exists.
+    inputs.files(providers.provider {
+        if (localModelFile.isFile) listOf(localModelFile) else emptyList<File>()
+    })
     outputs.file(outputFile)
 
     doLast {
