@@ -109,6 +109,12 @@ android {
         compose = true
         buildConfig = true
     }
+
+    lint {
+        // English resources remain the fallback for locales that do not have a translation yet.
+        // Keep reporting these gaps without blocking APK builds.
+        warning += "MissingTranslation"
+    }
 }
 
 apply(from = file("download-tflite.gradle.kts"))
