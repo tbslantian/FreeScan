@@ -437,22 +437,97 @@ enum ImagePipeline {
     static func qrRectangles(in image: UIImage) -> [CGRect] {
         let image = upright(image)
         guard let cgImage = image.cgImage else { return [] }
-        let request = VNDetectBarcodesRequest()
-        request.symbologies = [.qr]
-        do {
-            try VNImageRequestHandler(cgImage: cgImage, orientation: .up).perform([request])
-        } catch {
-            return []
+        let sourceWidth = cgImage.width
+        let sourceHeight = cgImage.height
+        let tileSize = 1280
+        let tileStep = 1024
+        var regions: [CGRect] = []
+
+        func overlapFraction(_ a: CGRect, _ b: CGRect) -> CGFloat {
+            let intersection = a.intersection(b)
+            guard !intersection.isNull, a.width > 0, a.height > 0 else { return 0 }
+            return intersection.width * intersection.height / (a.width * a.height)
         }
-        var regions = (request.results ?? []).map { observation in
-            let box = observation.boundingBox
-            // Vision rectangles use a bottom-left origin; image-space uses top-left.
-            let rect = CGRect(x: box.minX, y: 1 - box.maxY, width: box.width, height: box.height)
-            return rect.insetBy(dx: -max(0.008, rect.width * 0.12), dy: -max(0.008, rect.height * 0.12))
-                .intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
+        func tileStarts(_ length: Int) -> [Int] {
+            guard length > tileSize else { return [0] }
+            let last = length - tileSize
+            var starts = Array(stride(from: 0, through: last, by: tileStep))
+            if starts.last != last { starts.append(last) }
+            return starts
+        }
+        func detect(in view: CGImage, originX: Int, originY: Int,
+                    regionWidth: Int, regionHeight: Int) {
+            guard min(view.width, view.height) >= 24 else { return }
+            let request = VNDetectBarcodesRequest()
+            request.symbologies = [.qr]
+            do {
+                try VNImageRequestHandler(cgImage: view, orientation: .up).perform([request])
+            } catch {
+                return
+            }
+            for observation in request.results ?? [] {
+                // A decoded payload is the validation gate used by Android before auto-erasing.
+                guard observation.symbology == .qr, observation.confidence >= 0.2,
+                      let payload = observation.payloadString, !payload.isEmpty else { continue }
+                let box = observation.boundingBox
+                let detected = CGRect(
+                    x: CGFloat(originX) + box.minX * CGFloat(regionWidth),
+                    y: CGFloat(originY) + (1 - box.maxY) * CGFloat(regionHeight),
+                    width: box.width * CGFloat(regionWidth),
+                    height: box.height * CGFloat(regionHeight)
+                )
+                guard detected.width >= 8, detected.height >= 8,
+                      max(detected.width, detected.height) <= CGFloat(min(sourceWidth, sourceHeight)) * 0.30 else {
+                    // Oversized detections are left for manual repair instead of auto-erased.
+                    continue
+                }
+                let padded = detected.insetBy(dx: -max(4, detected.width * 0.12),
+                                              dy: -max(4, detected.height * 0.12))
+                    .intersection(CGRect(x: 0, y: 0, width: sourceWidth, height: sourceHeight))
+                guard !padded.isNull, padded.width > 0, padded.height > 0 else { continue }
+                let normalized = CGRect(x: padded.minX / CGFloat(sourceWidth),
+                                         y: padded.minY / CGFloat(sourceHeight),
+                                         width: padded.width / CGFloat(sourceWidth),
+                                         height: padded.height / CGFloat(sourceHeight))
+                if !regions.contains(where: {
+                    overlapFraction($0, normalized) > 0.65 && overlapFraction(normalized, $0) > 0.65
+                }) {
+                    regions.append(normalized)
+                }
+            }
+        }
+
+        // Downsample the whole page for large marks, then scan overlapping original-resolution
+        // tiles so small codes remain detectable in camera-resolution scans.
+        let scale = min(1, 1600 / CGFloat(max(sourceWidth, sourceHeight)))
+        if scale < 1 {
+            let bounds = CGRect(x: 0, y: 0,
+                                width: max(1, (CGFloat(sourceWidth) * scale).rounded()),
+                                height: max(1, (CGFloat(sourceHeight) * scale).rounded()))
+            if let overview = ciContext.createCGImage(CIImage(cgImage: cgImage)
+                .transformed(by: CGAffineTransform(scaleX: scale, y: scale)), from: bounds) {
+                detect(in: overview, originX: 0, originY: 0,
+                       regionWidth: sourceWidth, regionHeight: sourceHeight)
+            }
+        } else {
+            detect(in: cgImage, originX: 0, originY: 0,
+                   regionWidth: sourceWidth, regionHeight: sourceHeight)
+        }
+        if max(sourceWidth, sourceHeight) > tileSize {
+            for top in tileStarts(sourceHeight) {
+                for left in tileStarts(sourceWidth) {
+                    let width = min(tileSize, sourceWidth - left)
+                    let height = min(tileSize, sourceHeight - top)
+                    guard let tile = cgImage.cropping(to: CGRect(x: left, y: top,
+                                                                 width: width, height: height)) else { continue }
+                    detect(in: tile, originX: left, originY: top,
+                           regionWidth: width, regionHeight: height)
+                }
+            }
         }
         // Preserve the Android app's automatic Quark footer path: the brand and QR can be
         // detected as a footer even when the QR itself is too small for barcode recognition.
+        var hasQuarkFooter = false
         if let pixels = RGBAImage(image) {
             let startX = Int(CGFloat(pixels.width) * 0.62)
             let startY = Int(CGFloat(pixels.height) * 0.90)
@@ -465,7 +540,7 @@ enum ImagePipeline {
                             pixel.b - pixel.g >= CGFloat(4) / 255 {
                             blueSamples += 1
                             if blueSamples >= 12 {
-                                regions.append(CGRect(x: 0.64, y: 0.90, width: 0.36, height: 0.10))
+                                hasQuarkFooter = true
                                 break
                             }
                         }
@@ -473,6 +548,11 @@ enum ImagePipeline {
                     if blueSamples >= 12 { break }
                 }
             }
+        }
+        if hasQuarkFooter {
+            let footer = CGRect(x: 0.64, y: 0.90, width: 0.36, height: 0.10)
+            regions.removeAll { overlapFraction($0, footer) > 0.7 }
+            regions.append(footer)
         }
         return regions
     }
