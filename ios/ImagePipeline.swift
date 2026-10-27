@@ -290,70 +290,145 @@ enum ImagePipeline {
         return UIImage(cgImage: result, scale: image.scale, orientation: .up)
     }
 
-    /// Local HSV-like color heuristic for colored pen. It does not identify black ink
-    /// and can also select colored printed content; users can undo by restoring Original.
+    /// HSV-threshold color mask with morphological close/dilation and local paper
+    /// interpolation. It is not OpenCV Telea and can select colored print as well.
     static func removeColoredInk(_ image: UIImage) -> UIImage {
         let image = upright(image)
         guard let buffer = RGBAImage(image) else { return image }
-        var mask = [Bool](repeating: false, count: buffer.width * buffer.height)
+        let pixelCount = buffer.width * buffer.height
+        var sourceMask = [Bool](repeating: false, count: pixelCount)
         var marked = 0
+        var maskLeft = buffer.width
+        var maskTop = buffer.height
+        var maskRight = -1
+        var maskBottom = -1
         for y in 0..<buffer.height {
             for x in 0..<buffer.width {
                 let p = buffer.pixel(x: x, y: y)
                 let hi = max(p.r, max(p.g, p.b))
                 let lo = min(p.r, min(p.g, p.b))
                 let saturation = hi == 0 ? 0 : (hi - lo) / hi
-                // Android's local path uses HSV S >= 30/255 and V >= 20/255;
-                // the previous thresholds missed pale antialiased blue/red strokes.
-                let isInkColor = saturation > 0.118 && hi > 0.078
+                // Match Android's HSV lower bounds: S >= 30 and V >= 20 on 8-bit channels.
+                let isInkColor = saturation * 255 >= 30 && hi * 255 >= 20
                 let index = y * buffer.width + x
-                mask[index] = isInkColor
-                if isInkColor { marked += 1 }
-            }
-        }
-        guard marked > 0, Double(marked) / Double(mask.count) < 0.10 else { return image }
-        let expansionRadius = max(2, min(4, Int((Double(max(buffer.width, buffer.height)) / 1200).rounded())))
-        var expandedMask = mask
-        for y in 0..<buffer.height {
-            for x in 0..<buffer.width where mask[y * buffer.width + x] {
-                let y0 = max(0, y - expansionRadius)
-                let y1 = min(buffer.height - 1, y + expansionRadius)
-                let x0 = max(0, x - expansionRadius)
-                let x1 = min(buffer.width - 1, x + expansionRadius)
-                for expandedY in y0...y1 {
-                    for expandedX in x0...x1
-                    where (expandedX - x) * (expandedX - x) + (expandedY - y) * (expandedY - y) <= expansionRadius * expansionRadius {
-                        expandedMask[expandedY * buffer.width + expandedX] = true
-                    }
+                sourceMask[index] = isInkColor
+                if isInkColor {
+                    marked += 1
+                    maskLeft = min(maskLeft, x); maskRight = max(maskRight, x)
+                    maskTop = min(maskTop, y); maskBottom = max(maskBottom, y)
                 }
             }
         }
-        mask = expandedMask
+        guard marked > 0, Double(marked) / Double(pixelCount) < 0.10,
+              maskRight >= maskLeft, maskBottom >= maskTop else { return image }
+
+        // Process only the ink region plus the same 32 px context Android gives
+        // OpenCV Telea, rather than expanding a 12 MP mask across the whole page.
+        let maxDimension = max(buffer.width, buffer.height)
+        let closeRadius = 1
+        let expansionSize = min(9, max(5, Int((Double(maxDimension) / 1200).rounded()) * 2 + 1))
+        let expansionRadius = expansionSize / 2
+        let context = 32 + expansionRadius + closeRadius
+        let left = max(0, maskLeft - context)
+        let top = max(0, maskTop - context)
+        let right = min(buffer.width, maskRight + context + 1)
+        let bottom = min(buffer.height, maskBottom + context + 1)
+        let width = right - left
+        let height = bottom - top
+        guard width > 0, height > 0 else { return image }
+
+        var raw = [Bool](repeating: false, count: width * height)
+        for y in top..<bottom {
+            let src = y * buffer.width + left
+            let dst = (y - top) * width
+            for x in 0..<width { raw[dst + x] = sourceMask[src + x] }
+        }
+        sourceMask.removeAll(keepingCapacity: false)
+
+        // 3x3 elliptical close (cross-shaped): connect tiny breaks in strokes.
+        var closeDilated = [Bool](repeating: false, count: raw.count)
+        if width > 2 && height > 2 {
+            for y in 1..<(height - 1) {
+                for x in 1..<(width - 1) {
+                    let index = y * width + x
+                    closeDilated[index] = raw[index] || raw[index - 1] || raw[index + 1] ||
+                        raw[index - width] || raw[index + width]
+                }
+            }
+        }
+        raw.removeAll(keepingCapacity: false)
+        var closed = [Bool](repeating: false, count: closeDilated.count)
+        if width > 2 && height > 2 {
+            for y in 1..<(height - 1) {
+                for x in 1..<(width - 1) {
+                    let index = y * width + x
+                    closed[index] = closeDilated[index] && closeDilated[index - 1] &&
+                        closeDilated[index + 1] && closeDilated[index - width] &&
+                        closeDilated[index + width]
+                }
+            }
+        }
+        closeDilated.removeAll(keepingCapacity: false)
+
+        // Android expands the closed mask with an elliptical 5–9 px kernel to
+        // cover antialiased pen edges before repairing the paper texture.
+        var mask = [Bool](repeating: false, count: closed.count)
+        for y in 0..<height {
+            for x in 0..<width where closed[y * width + x] {
+                for dy in -expansionRadius...expansionRadius {
+                    let yy = y + dy
+                    guard yy >= 0, yy < height else { continue }
+                    let rowRadius = Int((Double(expansionRadius * expansionRadius - dy * dy)).squareRoot())
+                    let x0 = max(0, x - rowRadius)
+                    let x1 = min(width - 1, x + rowRadius)
+                    guard x0 <= x1 else { continue }
+                    for xx in x0...x1 { mask[yy * width + xx] = true }
+                }
+            }
+        }
+        closed.removeAll(keepingCapacity: false)
+
         var pixels = buffer.pixels
-        for y in 0..<buffer.height {
-            var x = 0
-            while x < buffer.width {
-                let index = y * buffer.width + x
-                guard mask[index] else { x += 1; continue }
-                let start = x
-                while x < buffer.width && mask[y * buffer.width + x] { x += 1 }
-                let end = x - 1
-                let left = start > 0 ? buffer.pixel(x: start - 1, y: y) : nil
-                let right = x < buffer.width ? buffer.pixel(x: x, y: y) : nil
-                for px in start...end {
-                    let t = CGFloat(px - start + 1) / CGFloat(end - start + 2)
-                    let color: RGBAImage.Pixel
-                    if let left, let right {
-                        color = .lerp(left, right, t)
-                    } else if let left {
-                        color = left
-                    } else if let right {
-                        color = right
-                    } else {
-                        color = buffer.pixel(x: px, y: y)
-                    }
-                    buffer.setPixel(color, x: px, y: y, in: &pixels)
+        let repairRadius = max(4, min(9, Int(ceil(Double(maxDimension) / 850))))
+        func sample(_ x: Int, _ y: Int, dx: Int, dy: Int) -> (RGBAImage.Pixel, Int)? {
+            for distance in 1...repairRadius {
+                let sx = x + dx * distance
+                let sy = y + dy * distance
+                guard sx >= 0, sy >= 0, sx < width, sy < height else { return nil }
+                if !mask[sy * width + sx] {
+                    return (buffer.pixel(x: left + sx, y: top + sy), distance)
                 }
+            }
+            return nil
+        }
+        func interpolate(_ first: (RGBAImage.Pixel, Int)?, _ second: (RGBAImage.Pixel, Int)?)
+            -> (RGBAImage.Pixel, CGFloat)? {
+            guard let first, let second else { return nil }
+            let total = first.1 + second.1
+            let value = RGBAImage.Pixel.lerp(first.0, second.0, CGFloat(first.1) / CGFloat(total))
+            let edgeCost = abs(first.0.luminance - second.0.luminance)
+            return (value, edgeCost + CGFloat(total) / CGFloat(repairRadius * 32))
+        }
+        func consider(_ first: (RGBAImage.Pixel, Int)?, _ second: (RGBAImage.Pixel, Int)?,
+                      best: inout RGBAImage.Pixel, bestCost: inout CGFloat) {
+            guard let candidate = interpolate(first, second), candidate.1 < bestCost else { return }
+            best = candidate.0
+            bestCost = candidate.1
+        }
+
+        for y in 0..<height {
+            for x in 0..<width where mask[y * width + x] {
+                var repaired = buffer.pixel(x: left + x, y: top + y)
+                var bestCost = CGFloat.infinity
+                consider(sample(x, y, dx: -1, dy: 0), sample(x, y, dx: 1, dy: 0),
+                         best: &repaired, bestCost: &bestCost)
+                consider(sample(x, y, dx: 0, dy: -1), sample(x, y, dx: 0, dy: 1),
+                         best: &repaired, bestCost: &bestCost)
+                consider(sample(x, y, dx: -1, dy: -1), sample(x, y, dx: 1, dy: 1),
+                         best: &repaired, bestCost: &bestCost)
+                consider(sample(x, y, dx: 1, dy: -1), sample(x, y, dx: -1, dy: 1),
+                         best: &repaired, bestCost: &bestCost)
+                buffer.setPixel(repaired, x: left + x, y: top + y, in: &pixels)
             }
         }
         return buffer.image(from: pixels) ?? image
