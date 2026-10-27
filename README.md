@@ -46,6 +46,14 @@ APK 输出在 `app/build/outputs/apk/`。Release 签名密钥和密码应配置�
 
 GitHub Actions 在推送到 `main` 后运行许可证检查、项目检查和 Release 构建。
 
+## iOS 版本
+
+原生 SwiftUI 工程放在 ios/ 子目录，与 Android Gradle 工程分开。修改 ios/ 后由 GitHub Actions 的 macOS runner 单独构建；纯 iOS 提交不会触发 Android CI。
+
+在仓库的 Actions → iOS CI 中下载 FreeScan-iOS-Simulator artifact，可在 iOS Simulator 中运行。该构建未签名，不能直接安装到实体 iPhone。要生成可安装或发布的 IPA，需要 Apple 开发者证书和 provisioning profile。
+
+工程和 iOS 平台说明见 [ios/README.md](ios/README.md)。
+
 ## 技术栈
 
 - [Kotlin](https://kotlinlang.org/) 与 [Jetpack Compose](https://developer.android.com/compose)：应用逻辑和界面

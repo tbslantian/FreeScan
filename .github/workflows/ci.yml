@@ -3,6 +3,9 @@ name: Android CI
 on:
   push:
     branches: [ main ]
+    paths-ignore:
+      - 'ios/**'
+      - '.github/workflows/ios.yml'
 
 jobs:
   build:

@@ -1,0 +1,59 @@
+name: iOS CI
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'ios/**'
+      - '.github/workflows/ios.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'ios/**'
+      - '.github/workflows/ios.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build iOS Simulator app
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Show Xcode version
+        run: |
+          xcodebuild -version
+          xcodebuild -showsdks
+
+      - name: Build unsigned simulator app
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project ios/FreeScan.xcodeproj \
+            -scheme FreeScan \
+            -configuration Release \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath "$RUNNER_TEMP/FreeScanDerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Package simulator app
+        run: |
+          set -euo pipefail
+          app="$RUNNER_TEMP/FreeScanDerivedData/Build/Products/Release-iphonesimulator/FreeScan.app"
+          test -d "$app"
+          ditto -c -k --sequesterRsrc --keepParent "$app" "$GITHUB_WORKSPACE/FreeScan-iOS-Simulator.zip"
+
+      - name: Upload simulator build
+        uses: actions/upload-artifact@v6
+        with:
+          name: FreeScan-iOS-Simulator
+          path: FreeScan-iOS-Simulator.zip
+          if-no-files-found: error
+          retention-days: 14
