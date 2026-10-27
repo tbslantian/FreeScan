@@ -5,12 +5,32 @@
 
 import CoreImage
 import CoreImage.CIFilterBuiltins
+import CoreText
 import Foundation
 import UIKit
 import Vision
 
+struct RecognizedTextLine {
+    let text: String
+    /// Vision normalized bounds use a bottom-left origin.
+    let bounds: CGRect
+}
+
+struct LocalRepairStroke {
+    /// Normalized image coordinates with a top-left origin.
+    let points: [CGPoint]
+    /// Brush diameter as a fraction of the image's shorter edge.
+    let width: CGFloat
+}
+
 enum ImagePipeline {
     private static let ciContext = CIContext(options: [.useSoftwareRenderer: false])
+
+    static func supportedOCRLanguages() -> [String] {
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        return (try? request.supportedRecognitionLanguages()) ?? ["zh-Hans", "zh-Hant", "en-US"]
+    }
 
     static func upright(_ image: UIImage) -> UIImage {
         guard image.imageOrientation != .up else { return image }
@@ -24,11 +44,18 @@ enum ImagePipeline {
 
     static func filtered(_ image: UIImage, mode: ScanFilter) -> UIImage {
         let image = upright(image)
+        if mode == .automatic {
+            let resolved: ScanFilter = containsColor(image) ? .color : .grayscale
+            return filtered(image, mode: resolved)
+        }
+        if mode == .original { return image }
         guard let cgImage = image.cgImage else { return image }
         let input = CIImage(cgImage: cgImage)
         let controls = CIFilter.colorControls()
         controls.inputImage = input
         switch mode {
+        case .automatic, .original:
+            return image
         case .color:
             controls.saturation = 1.05
             controls.contrast = 1.08
@@ -49,10 +76,50 @@ enum ImagePipeline {
             controls.saturation = 0.92
             controls.contrast = 1.32
             controls.brightness = 0.035
+        case .localGrayscale:
+            controls.saturation = 0
+            controls.contrast = 1.32
+            controls.brightness = 0.025
+        case .localSoft:
+            controls.saturation = 0.96
+            controls.contrast = 1.16
+            controls.brightness = 0.035
         }
-        guard let output = controls.outputImage,
-              let result = ciContext.createCGImage(output, from: output.extent) else { return image }
+        guard var output = controls.outputImage else { return image }
+        if mode == .brighten || mode == .enhance || mode == .localSoft {
+            let shadows = CIFilter.highlightShadowAdjust()
+            shadows.inputImage = output
+            shadows.shadowAmount = mode == .brighten ? 0.65 : 0.35
+            shadows.highlightAmount = 0.85
+            output = shadows.outputImage ?? output
+        }
+        if mode == .enhance || mode == .localGrayscale || mode == .localSoft {
+            let sharpen = CIFilter.sharpenLuminance()
+            sharpen.inputImage = output
+            sharpen.sharpness = mode == .enhance ? 0.65 : 0.32
+            output = sharpen.outputImage ?? output
+        }
+        guard let result = ciContext.createCGImage(output, from: output.extent) else { return image }
         return UIImage(cgImage: result, scale: image.scale, orientation: .up)
+    }
+
+    private static func containsColor(_ image: UIImage) -> Bool {
+        let sampleImage = UIGraphicsImageRenderer(size: CGSize(width: 64, height: 64)).image { _ in
+            image.draw(in: CGRect(x: 0, y: 0, width: 64, height: 64))
+        }
+        guard let buffer = RGBAImage(sampleImage), buffer.width > 0, buffer.height > 0 else { return true }
+        var colored = 0
+        var total = 0
+        for y in 0..<buffer.height {
+            for x in 0..<buffer.width {
+                let pixel = buffer.pixel(x: x, y: y)
+                let maximum = max(pixel.r, max(pixel.g, pixel.b))
+                let minimum = min(pixel.r, min(pixel.g, pixel.b))
+                if maximum > 0.12 && (maximum - minimum) / maximum > 0.12 { colored += 1 }
+                total += 1
+            }
+        }
+        return total > 0 && Double(colored) / Double(total) >= 0.025
     }
 
     /// Estimate the paper illumination on a coarse grid using bright local samples, then
@@ -144,6 +211,23 @@ enum ImagePipeline {
         }
     }
 
+    /// Caps the captured image's longest pixel edge to the selected scan size.
+    static func resize(_ image: UIImage, maxDimension: Int) -> UIImage {
+        let normalized = upright(image)
+        guard let cgImage = normalized.cgImage, maxDimension > 0 else { return normalized }
+        let longest = CGFloat(max(cgImage.width, cgImage.height))
+        let scale = min(1, CGFloat(maxDimension) / longest)
+        guard scale < 1 else { return normalized }
+        let size = CGSize(width: max(1, (CGFloat(cgImage.width) * scale).rounded()),
+                          height: max(1, (CGFloat(cgImage.height) * scale).rounded()))
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+        return UIGraphicsImageRenderer(size: size, format: format).image { _ in
+            normalized.draw(in: CGRect(origin: .zero, size: size))
+        }
+    }
+
     /// Vision rectangle detection followed by Core Image perspective correction.
     static func autoCropDocument(_ image: UIImage) -> UIImage {
         let image = upright(image)
@@ -186,6 +270,26 @@ enum ImagePipeline {
         return UIImage(cgImage: result, scale: image.scale, orientation: .up)
     }
 
+    static func perspectiveCrop(_ image: UIImage, quad: DocumentQuad) -> UIImage {
+        let image = upright(image)
+        guard let cgImage = image.cgImage else { return image }
+        let input = CIImage(cgImage: cgImage)
+        let extent = input.extent
+        func ciPoint(_ point: CGPoint) -> CGPoint {
+            CGPoint(x: extent.minX + point.x * extent.width,
+                    y: extent.minY + (1 - point.y) * extent.height)
+        }
+        let correction = CIFilter.perspectiveCorrection()
+        correction.inputImage = input
+        correction.topLeft = ciPoint(quad.topLeft)
+        correction.topRight = ciPoint(quad.topRight)
+        correction.bottomLeft = ciPoint(quad.bottomLeft)
+        correction.bottomRight = ciPoint(quad.bottomRight)
+        guard let output = correction.outputImage,
+              let result = ciContext.createCGImage(output, from: output.extent) else { return image }
+        return UIImage(cgImage: result, scale: image.scale, orientation: .up)
+    }
+
     /// Local HSV-like color heuristic for colored pen. It does not identify black ink
     /// and can also select colored printed content; users can undo by restoring Original.
     static func removeColoredInk(_ image: UIImage) -> UIImage {
@@ -199,13 +303,32 @@ enum ImagePipeline {
                 let hi = max(p.r, max(p.g, p.b))
                 let lo = min(p.r, min(p.g, p.b))
                 let saturation = hi == 0 ? 0 : (hi - lo) / hi
-                let isInkColor = saturation > 0.20 && hi > 0.18 && hi < 0.99
+                // Android's local path uses HSV S >= 30/255 and V >= 20/255;
+                // the previous thresholds missed pale antialiased blue/red strokes.
+                let isInkColor = saturation > 0.118 && hi > 0.078
                 let index = y * buffer.width + x
                 mask[index] = isInkColor
                 if isInkColor { marked += 1 }
             }
         }
         guard marked > 0, Double(marked) / Double(mask.count) < 0.10 else { return image }
+        let expansionRadius = max(2, min(4, Int((Double(max(buffer.width, buffer.height)) / 1200).rounded())))
+        var expandedMask = mask
+        for y in 0..<buffer.height {
+            for x in 0..<buffer.width where mask[y * buffer.width + x] {
+                let y0 = max(0, y - expansionRadius)
+                let y1 = min(buffer.height - 1, y + expansionRadius)
+                let x0 = max(0, x - expansionRadius)
+                let x1 = min(buffer.width - 1, x + expansionRadius)
+                for expandedY in y0...y1 {
+                    for expandedX in x0...x1
+                    where (expandedX - x) * (expandedX - x) + (expandedY - y) * (expandedY - y) <= expansionRadius * expansionRadius {
+                        expandedMask[expandedY * buffer.width + expandedX] = true
+                    }
+                }
+            }
+        }
+        mask = expandedMask
         var pixels = buffer.pixels
         for y in 0..<buffer.height {
             var x = 0
@@ -311,20 +434,125 @@ enum ImagePipeline {
         return buffer.image(from: pixels) ?? image
     }
 
-    static func recognizeText(_ image: UIImage, language: String = "zh-Hans") async throws -> String {
+    /// Repairs hand-painted marks by estimating pixels from the nearest unmasked
+    /// samples on each axis. Best suited to paper and other locally smooth surfaces.
+    static func repair(_ image: UIImage, strokes: [LocalRepairStroke]) -> UIImage {
         let image = upright(image)
-        guard let cgImage = image.cgImage else { return "" }
+        guard let buffer = RGBAImage(image), !strokes.isEmpty else { return image }
+        let count = buffer.width * buffer.height
+        var mask = [Bool](repeating: false, count: count)
+        var left = buffer.width
+        var top = buffer.height
+        var right = -1
+        var bottom = -1
+
+        func markDisk(centerX: Int, centerY: Int, radius: Int) {
+            let y0 = max(0, centerY - radius)
+            let y1 = min(buffer.height - 1, centerY + radius)
+            let x0 = max(0, centerX - radius)
+            let x1 = min(buffer.width - 1, centerX + radius)
+            guard x0 <= x1, y0 <= y1 else { return }
+            for y in y0...y1 {
+                for x in x0...x1 where (x - centerX) * (x - centerX) + (y - centerY) * (y - centerY) <= radius * radius {
+                    mask[y * buffer.width + x] = true
+                }
+            }
+            left = min(left, x0); right = max(right, x1)
+            top = min(top, y0); bottom = max(bottom, y1)
+        }
+
+        for stroke in strokes where !stroke.points.isEmpty {
+            let radius = max(2, Int((stroke.width * CGFloat(min(buffer.width, buffer.height)) / 2).rounded()))
+            let centers = stroke.points.map { point in
+                CGPoint(x: point.x * CGFloat(buffer.width - 1), y: point.y * CGFloat(buffer.height - 1))
+            }
+            if centers.count == 1, let point = centers.first {
+                markDisk(centerX: Int(point.x.rounded()), centerY: Int(point.y.rounded()), radius: radius)
+            }
+            for (start, end) in zip(centers, centers.dropFirst()) {
+                let dx = end.x - start.x
+                let dy = end.y - start.y
+                let distance = hypot(dx, dy)
+                let steps = max(1, Int(ceil(distance / CGFloat(max(1, radius / 2)))) )
+                for step in 0...steps {
+                    let t = CGFloat(step) / CGFloat(steps)
+                    markDisk(centerX: Int((start.x + dx * t).rounded()),
+                             centerY: Int((start.y + dy * t).rounded()), radius: radius)
+                }
+            }
+        }
+
+        guard right >= left, bottom >= top else { return image }
+        var pixels = buffer.pixels
+        let maxSearch = max(8, min(64, Int(CGFloat(min(buffer.width, buffer.height)) * 0.025)))
+
+        func sample(_ x: Int, _ y: Int, dx: Int, dy: Int) -> (RGBAImage.Pixel, Int)? {
+            for distance in 1...maxSearch {
+                let sx = x + dx * distance
+                let sy = y + dy * distance
+                guard sx >= 0, sy >= 0, sx < buffer.width, sy < buffer.height else { return nil }
+                if !mask[sy * buffer.width + sx] { return (buffer.pixel(x: sx, y: sy), distance) }
+            }
+            return nil
+        }
+
+        for y in top...bottom {
+            for x in left...right where mask[y * buffer.width + x] {
+                let l = sample(x, y, dx: -1, dy: 0)
+                let r = sample(x, y, dx: 1, dy: 0)
+                let u = sample(x, y, dx: 0, dy: -1)
+                let d = sample(x, y, dx: 0, dy: 1)
+                let horizontal: RGBAImage.Pixel? = {
+                    guard let l, let r else { return nil }
+                    return .lerp(l.0, r.0, CGFloat(l.1) / CGFloat(l.1 + r.1))
+                }()
+                let vertical: RGBAImage.Pixel? = {
+                    guard let u, let d else { return nil }
+                    return .lerp(u.0, d.0, CGFloat(u.1) / CGFloat(u.1 + d.1))
+                }()
+                let repaired: RGBAImage.Pixel
+                switch (horizontal, vertical) {
+                case let (h?, v?):
+                    let hCost = abs((l?.0.luminance ?? h.luminance) - (r?.0.luminance ?? h.luminance))
+                    let vCost = abs((u?.0.luminance ?? v.luminance) - (d?.0.luminance ?? v.luminance))
+                    repaired = hCost <= vCost ? h : v
+                case let (h?, nil): repaired = h
+                case let (nil, v?): repaired = v
+                default: repaired = buffer.pixel(x: x, y: y)
+                }
+                buffer.setPixel(repaired, x: x, y: y, in: &pixels)
+            }
+        }
+        return buffer.image(from: pixels) ?? image
+    }
+
+    static func recognizeText(_ image: UIImage, language: String = "zh-Hans") async throws -> String {
+        let lines = try await recognizeTextLines(image, language: language)
+        return lines.map(\.text).joined(separator: "\n")
+    }
+
+    static func recognizeTextLines(_ image: UIImage, language: String = "zh-Hans") async throws -> [RecognizedTextLine] {
+        let image = upright(image)
+        guard let cgImage = image.cgImage else { return [] }
         return try await withCheckedThrowingContinuation { continuation in
             let request = VNRecognizeTextRequest { request, error in
                 if let error { continuation.resume(throwing: error); return }
-                let text = (request.results as? [VNRecognizedTextObservation] ?? [])
-                    .compactMap { $0.topCandidates(1).first?.string }
-                    .joined(separator: "\n")
-                continuation.resume(returning: text)
+                let lines = (request.results as? [VNRecognizedTextObservation] ?? []).compactMap { observation in
+                    guard let text = observation.topCandidates(1).first?.string else { return nil }
+                    return RecognizedTextLine(text: text, bounds: observation.boundingBox)
+                }
+                continuation.resume(returning: lines)
             }
             request.recognitionLevel = .accurate
             request.usesLanguageCorrection = true
-            request.recognitionLanguages = [language]
+            if language == "auto" {
+                request.automaticallyDetectsLanguage = true
+            } else {
+                let supported = supportedOCRLanguages()
+                request.recognitionLanguages = supported.contains(language)
+                    ? [language]
+                    : [supported.first(where: { $0.hasPrefix("zh-Hans") }) ?? supported.first ?? "en-US"]
+            }
             DispatchQueue.global(qos: .userInitiated).async {
                 do { try VNImageRequestHandler(cgImage: cgImage, orientation: .up).perform([request]) }
                 catch { continuation.resume(throwing: error) }

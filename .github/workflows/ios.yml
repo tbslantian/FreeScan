@@ -1,12 +1,7 @@
-name: iOS CI
+name: iOS IPA
 
 on:
   push:
-    branches: [ main ]
-    paths:
-      - 'ios/**'
-      - '.github/workflows/ios.yml'
-  pull_request:
     branches: [ main ]
     paths:
       - 'ios/**'
@@ -18,9 +13,15 @@ permissions:
 
 jobs:
   build:
-    name: Build iOS Simulator app
+    name: Archive and export signed iPhone/iPad IPA
     runs-on: macos-15
     timeout-minutes: 45
+    env:
+      IOS_CERTIFICATE_P12_BASE64: ${{ secrets.IOS_CERTIFICATE_P12_BASE64 }}
+      IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
+      IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+      IOS_TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
+      IOS_BUNDLE_ID: ${{ secrets.IOS_BUNDLE_ID }}
     steps:
       - name: Check out source
         uses: actions/checkout@v7
@@ -30,30 +31,161 @@ jobs:
           xcodebuild -version
           xcodebuild -showsdks
 
-      - name: Build unsigned simulator app
+      - name: Compile for a generic iPhone/iPad device
+        shell: bash
         run: |
           set -euo pipefail
           xcodebuild \
             -project ios/FreeScan.xcodeproj \
             -scheme FreeScan \
             -configuration Release \
-            -sdk iphonesimulator \
-            -destination 'generic/platform=iOS Simulator' \
+            -destination 'generic/platform=iOS' \
             -derivedDataPath "$RUNNER_TEMP/FreeScanDerivedData" \
             CODE_SIGNING_ALLOWED=NO \
             build
 
-      - name: Package simulator app
+      - name: Validate Apple signing secrets
+        shell: bash
         run: |
           set -euo pipefail
-          app="$RUNNER_TEMP/FreeScanDerivedData/Build/Products/Release-iphonesimulator/FreeScan.app"
-          test -d "$app"
-          ditto -c -k --sequesterRsrc --keepParent "$app" "$GITHUB_WORKSPACE/FreeScan-iOS-Simulator.zip"
+          for name in IOS_CERTIFICATE_P12_BASE64 IOS_CERTIFICATE_PASSWORD IOS_PROVISIONING_PROFILE_BASE64 IOS_TEAM_ID IOS_BUNDLE_ID; do
+            if [ -z "${!name}" ]; then
+              echo "Missing required GitHub Actions secret: $name" >&2
+              exit 1
+            fi
+          done
 
-      - name: Upload simulator build
+      - name: Install Apple distribution signing assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          keychain="$RUNNER_TEMP/freescan-signing.keychain-db"
+          keychain_password="$(openssl rand -base64 32)"
+          certificate="$RUNNER_TEMP/apple-distribution.p12"
+          profile="$RUNNER_TEMP/freescan-appstore.mobileprovision"
+
+          printf '%s' "$IOS_CERTIFICATE_P12_BASE64" | base64 -D > "$certificate"
+          printf '%s' "$IOS_PROVISIONING_PROFILE_BASE64" | base64 -D > "$profile"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$certificate" -P "$IOS_CERTIFICATE_PASSWORD" -k "$keychain" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain"
+          security list-keychain -d user -s "$keychain"
+          identities=$(security find-identity -v -p codesigning "$keychain")
+          if ! grep -q 'Apple Distribution' <<< "$identities"; then
+            echo "The imported P12 does not contain an Apple Distribution signing identity." >&2
+            exit 1
+          fi
+
+          security cms -D -i "$profile" > "$RUNNER_TEMP/freescan-profile.plist"
+          profile_uuid=$(/usr/libexec/PlistBuddy -c 'Print :UUID' "$RUNNER_TEMP/freescan-profile.plist")
+          profile_name=$(/usr/libexec/PlistBuddy -c 'Print :Name' "$RUNNER_TEMP/freescan-profile.plist")
+          profile_team=$(/usr/libexec/PlistBuddy -c 'Print :TeamIdentifier:0' "$RUNNER_TEMP/freescan-profile.plist")
+          if [ "$profile_team" != "$IOS_TEAM_ID" ]; then
+            echo "Provisioning profile team does not match IOS_TEAM_ID." >&2
+            exit 1
+          fi
+          python3 - <<'PY'
+          import os
+          import plistlib
+          from datetime import datetime, timezone
+
+          path = os.path.join(os.environ["RUNNER_TEMP"], "freescan-profile.plist")
+          with open(path, "rb") as source:
+              profile = plistlib.load(source)
+          entitlements = profile.get("Entitlements", {})
+          team_ids = profile.get("TeamIdentifier", [])
+          profile_team = team_ids[0] if team_ids else ""
+          if profile_team != os.environ["IOS_TEAM_ID"]:
+              raise SystemExit("Provisioning profile team does not match IOS_TEAM_ID.")
+          app_identifier = entitlements.get("application-identifier", "")
+          bundle_id = os.environ["IOS_BUNDLE_ID"]
+          expected_app_identifier = f"{profile_team}.{bundle_id}"
+          if app_identifier != expected_app_identifier:
+              raise SystemExit("Provisioning profile App ID does not match IOS_BUNDLE_ID.")
+          if entitlements.get("get-task-allow", False):
+              raise SystemExit("A development profile was supplied; an App Store profile is required.")
+          if profile.get("ProvisionedDevices") or profile.get("ProvisionsAllDevices"):
+              raise SystemExit("An Ad Hoc or Enterprise profile was supplied; an App Store profile is required.")
+          expiry = profile.get("ExpirationDate")
+          if expiry is None:
+              raise SystemExit("The provisioning profile is missing an expiration date or has expired.")
+          if expiry.tzinfo is None:
+              expiry = expiry.replace(tzinfo=timezone.utc)
+          if expiry <= datetime.now(timezone.utc):
+              raise SystemExit("The provisioning profile is missing an expiration date or has expired.")
+          PY
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+          cp "$profile" "$HOME/Library/MobileDevice/Provisioning Profiles/$profile_uuid.mobileprovision"
+          {
+            echo "PROFILE_UUID=$profile_uuid"
+            echo "PROFILE_NAME=$profile_name"
+          } >> "$GITHUB_ENV"
+
+      - name: Archive for iPhone and iPad
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project ios/FreeScan.xcodeproj \
+            -scheme FreeScan \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/FreeScan.xcarchive" \
+            -derivedDataPath "$RUNNER_TEMP/FreeScanDerivedData" \
+            DEVELOPMENT_TEAM="$IOS_TEAM_ID" \
+            PRODUCT_BUNDLE_IDENTIFIER="$IOS_BUNDLE_ID" \
+            CURRENT_PROJECT_VERSION="$GITHUB_RUN_NUMBER" \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY='Apple Distribution' \
+            PROVISIONING_PROFILE_SPECIFIER="$PROFILE_NAME" \
+            archive
+
+      - name: Export App Store Connect IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          import plistlib
+
+          options = {
+              "destination": "export",
+              "method": "app-store-connect",
+              "signingStyle": "manual",
+              "teamID": os.environ["IOS_TEAM_ID"],
+              "provisioningProfiles": {
+                  os.environ["IOS_BUNDLE_ID"]: os.environ["PROFILE_NAME"]
+              },
+              "uploadSymbols": True,
+          }
+          with open(os.path.join(os.environ["RUNNER_TEMP"], "ExportOptions.plist"), "wb") as output:
+              plistlib.dump(options, output)
+          PY
+          xcodebuild \
+            -exportArchive \
+            -archivePath "$RUNNER_TEMP/FreeScan.xcarchive" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" \
+            -exportPath "$RUNNER_TEMP/FreeScanIPA"
+          ipa=$(find "$RUNNER_TEMP/FreeScanIPA" -maxdepth 1 -name '*.ipa' -print -quit)
+          test -n "$ipa"
+          cp "$ipa" "$GITHUB_WORKSPACE/FreeScan-iOS-${GITHUB_RUN_NUMBER}.ipa"
+
+      - name: Upload signed IPA
         uses: actions/upload-artifact@v6
         with:
-          name: FreeScan-iOS-Simulator
-          path: FreeScan-iOS-Simulator.zip
+          name: FreeScan-iOS-IPA
+          path: FreeScan-iOS-*.ipa
           if-no-files-found: error
           retention-days: 14
+
+      - name: Remove signing assets
+        if: always()
+        shell: bash
+        run: |
+          security delete-keychain "$RUNNER_TEMP/freescan-signing.keychain-db" 2>/dev/null || true
+          profile_uuid=$(/usr/libexec/PlistBuddy -c 'Print :UUID' "$RUNNER_TEMP/freescan-profile.plist" 2>/dev/null || true)
+          if [ -n "$profile_uuid" ]; then
+            rm -f "$HOME/Library/MobileDevice/Provisioning Profiles/$profile_uuid.mobileprovision"
+          fi

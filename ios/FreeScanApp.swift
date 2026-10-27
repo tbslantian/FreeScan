@@ -31,7 +31,7 @@ struct HomeView: View {
     @EnvironmentObject private var library: ScanLibrary
     @State private var showScanner = false
     @State private var showCertificates = false
-    @State private var selectedPhoto: PhotosPickerItem?
+    @State private var selectedPhotos: [PhotosPickerItem] = []
     @State private var showPDFImporter = false
     var body: some View {
         NavigationStack {
@@ -46,7 +46,7 @@ struct HomeView: View {
                             .frame(maxWidth: .infinity).padding(.vertical, 18)
                     }.buttonStyle(.borderedProminent)
                     LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
-                        PhotosPicker(selection: $selectedPhoto, matching: .images) {
+                        PhotosPicker(selection: $selectedPhotos, maxSelectionCount: 20, matching: .images) {
                             FeatureCardLabel(title: "相册导入", subtitle: "扫描图片", icon: "photo")
                         }.buttonStyle(.plain)
                         Button { showCertificates = true } label: {
@@ -73,12 +73,21 @@ struct HomeView: View {
             .navigationTitle("FreeScan").navigationBarTitleDisplayMode(.inline)
             .sheet(isPresented: $showScanner) { ScanCameraView(mode: .document) }
             .sheet(isPresented: $showCertificates) { CertificateScanView() }
-            .onChange(of: selectedPhoto) { _, item in
-                guard let item else { return }
+            .onChange(of: selectedPhotos) { _, items in
+                guard !items.isEmpty else { return }
+                selectedPhotos = []
                 Task {
-                    if let data = try? await item.loadTransferable(type: Data.self), let image = UIImage(data: data) {
-                        let autoCrop = UserDefaults.standard.object(forKey: "autoCropEnabled") as? Bool ?? true
-                        library.add(autoCrop ? ImagePipeline.autoCropDocument(image) : image)
+                    let autoCrop = UserDefaults.standard.object(forKey: "autoCropEnabled") as? Bool ?? true
+                    let resolution = CameraResolutionPreset(
+                        rawValue: UserDefaults.standard.string(forKey: "scanResolution") ?? "4K") ?? .fourK
+                    for item in items {
+                        guard let data = try? await item.loadTransferable(type: Data.self),
+                              let image = UIImage(data: data) else { continue }
+                        let processed = await Task.detached(priority: .userInitiated) {
+                            let cropped = autoCrop ? ImagePipeline.autoCropDocument(image) : image
+                            return ImagePipeline.resize(cropped, maxDimension: resolution.maxDimension)
+                        }.value
+                        library.add(processed)
                     }
                 }
             }
@@ -120,14 +129,51 @@ struct ScanCameraView: View {
     @AppStorage("autoCropEnabled") private var autoCropEnabled = true
     @State private var template = CertificateTemplate.all[0]
     @State private var isBackSide = false
-    @State private var photoItem: PhotosPickerItem?
+    @State private var photoItems: [PhotosPickerItem] = []
+    @State private var capturedPreview: UIImage?
     let mode: ScanCameraMode
 
     var body: some View {
         NavigationStack {
             ZStack {
-                CameraPreview(session: camera.session).ignoresSafeArea()
+                CameraPreview(session: camera.session, detectedDocument: camera.detectedDocument).ignoresSafeArea()
                 VStack(spacing: 16) {
+                    HStack {
+                        Menu {
+                            Picker("相机分辨率", selection: $camera.resolution) {
+                                ForEach(CameraResolutionPreset.allCases) { preset in
+                                    Text(preset.rawValue).tag(preset)
+                                }
+                            }
+                            Toggle("多帧拍摄并选取最清晰帧", isOn: Binding(
+                                get: { camera.multiFrameEnabled },
+                                set: { camera.setMultiFrameEnabled($0) }
+                            ))
+                        } label: {
+                            Label(camera.resolution.rawValue, systemImage: "viewfinder")
+                        }
+                        .onChange(of: camera.resolution) { _, preset in camera.setResolution(preset) }
+                        Spacer()
+                        Menu {
+                            Picker("闪光灯", selection: $camera.flashMode) {
+                                ForEach(CameraFlashMode.allCases) { mode in
+                                    Text(mode.title).tag(mode)
+                                }
+                            }
+                        } label: {
+                            Image(systemName: camera.flashMode == .off ? "bolt.slash" : "bolt")
+                                .font(.title3)
+                        }
+                        if camera.hasTorch {
+                            Button { camera.toggleTorch() } label: {
+                                Image(systemName: camera.torchEnabled ? "flashlight.on.fill" : "flashlight.off.fill")
+                                    .font(.title3)
+                            }
+                            .accessibilityLabel(camera.torchEnabled ? "关闭补光灯" : "开启补光灯")
+                        }
+                    }
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 18)
                     if mode == .certificate {
                         Text(isBackSide ? "证件反面 · \(template.title)" : "证件正面 · \(template.title)")
                             .font(.headline).padding(10).background(.black.opacity(0.5), in: Capsule()).foregroundStyle(.white)
@@ -141,7 +187,11 @@ struct ScanCameraView: View {
                         }
                     }
                     Spacer()
-                    GuideOverlay(aspect: mode == .certificate ? template.aspect : 0.72).padding(.horizontal, 36)
+                    if mode == .certificate {
+                        CertificateTemplateGuide(template: template).padding(.horizontal, 36)
+                    } else {
+                        GuideOverlay(aspect: 0.72).padding(.horizontal, 36)
+                    }
                     Spacer()
                     HStack {
                         if mode == .certificate {
@@ -156,11 +206,28 @@ struct ScanCameraView: View {
                                 .overlay(Circle().stroke(.green, lineWidth: 5).padding(5))
                         }
                         Spacer()
-                        PhotosPicker(selection: $photoItem, matching: .images) {
+                        PhotosPicker(selection: $photoItems, maxSelectionCount: 20, matching: .images) {
                             Image(systemName: "photo").font(.title2).foregroundStyle(.white)
-                        }.accessibilityLabel("相册导入")
+                        }.accessibilityLabel("相册导入，可多选")
                     }.padding(.horizontal, 28).padding(.bottom, 24)
                 }.padding(.top, 18)
+                if let capturedPreview {
+                    VStack(spacing: 12) {
+                        Text(mode == .certificate ? "检查证件照片" : "检查扫描结果")
+                            .font(.headline).foregroundStyle(.white)
+                        Image(uiImage: capturedPreview)
+                            .resizable().scaledToFit().frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .padding(.horizontal, 12)
+                        HStack(spacing: 16) {
+                            Button("重拍") { self.capturedPreview = nil }
+                                .buttonStyle(.bordered).tint(.white)
+                            Button(mode == .certificate ? "使用此面" : "添加页面") { acceptCapture() }
+                                .buttonStyle(.borderedProminent).tint(.green)
+                        }.padding(.bottom, 22)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color.black.ignoresSafeArea())
+                }
             }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) { Button("返回") { dismiss() }.foregroundStyle(.white) }
@@ -168,8 +235,10 @@ struct ScanCameraView: View {
                     if mode == .certificate {
                         HStack(spacing: 14) {
                             Toggle("自动裁边", isOn: $autoCropEnabled).labelsHidden().tint(.green)
-                            Button("完成") { dismiss() }.foregroundStyle(.white)
+                            Button("完成 (\(library.pages.count))") { dismiss() }.foregroundStyle(.white)
                         }
+                    } else {
+                        Button("完成 (\(library.pages.count))") { dismiss() }.foregroundStyle(.white)
                     }
                 }
             }
@@ -177,24 +246,17 @@ struct ScanCameraView: View {
             .onAppear { camera.start() }.onDisappear { camera.stop() }
             .onChange(of: camera.capturedImage) { _, image in
                 guard let image else { return }
-                library.add(autoCropEnabled ? ImagePipeline.autoCropDocument(image) : image)
+                capturedPreview = image
                 camera.capturedImage = nil
-                if mode == .certificate {
-                    isBackSide = true
-                } else {
-                    dismiss()
-                }
             }
-            .onChange(of: photoItem) { _, item in
-                guard let item else { return }
+            .onChange(of: photoItems) { _, items in
+                guard !items.isEmpty else { return }
+                photoItems = []
                 Task {
-                    if let data = try? await item.loadTransferable(type: Data.self), let image = UIImage(data: data) {
-                        library.add(autoCropEnabled ? ImagePipeline.autoCropDocument(image) : image)
-                        if mode == .certificate {
-                            isBackSide = true
-                        } else {
-                            dismiss()
-                        }
+                    for item in items {
+                        guard let data = try? await item.loadTransferable(type: Data.self),
+                              let image = UIImage(data: data) else { continue }
+                        await appendScannedImage(image)
                     }
                 }
             }
@@ -202,6 +264,23 @@ struct ScanCameraView: View {
                 Button("好") { camera.errorMessage = nil }
             } message: { Text(camera.errorMessage ?? "") }
         }
+    }
+
+    private func acceptCapture() {
+        guard let image = capturedPreview else { return }
+        capturedPreview = nil
+        Task { await appendScannedImage(image) }
+    }
+
+    private func appendScannedImage(_ image: UIImage) async {
+        let shouldCrop = autoCropEnabled
+        let maxDimension = camera.resolution.maxDimension
+        let processed = await Task.detached(priority: .userInitiated) {
+            let cropped = shouldCrop ? ImagePipeline.autoCropDocument(image) : image
+            return ImagePipeline.resize(cropped, maxDimension: maxDimension)
+        }.value
+        library.add(processed)
+        if mode == .certificate { isBackSide = true }
     }
 }
 
@@ -219,6 +298,99 @@ struct GuideOverlay: View {
     }
 }
 
+struct CertificateTemplateGuide: View {
+    let template: CertificateTemplate
+
+    var body: some View {
+        GeometryReader { proxy in
+            let availableHeight = max(100, proxy.size.height - 84)
+            let frameWidth = min(proxy.size.width * 0.92,
+                                 min(300, min(220 * template.aspect, availableHeight * template.aspect)))
+            let frameHeight = frameWidth / template.aspect
+            let frame = CGRect(x: (proxy.size.width - frameWidth) / 2,
+                               y: (proxy.size.height - frameHeight) / 2,
+                               width: frameWidth, height: frameHeight)
+            Canvas { context, _ in
+                drawCertificateArtwork(template, in: frame, context: &context)
+            }
+        }
+        .frame(height: 340)
+        .accessibilityLabel("\(template.title)证件取景框")
+    }
+}
+
+private func drawCertificateArtwork(_ template: CertificateTemplate, in rect: CGRect,
+                                    context: inout GraphicsContext) {
+    var path = Path()
+    let width = rect.width
+    let height = rect.height
+    let shortSide = min(width, height)
+    let detailWidth = max(1.2, shortSide * 0.012)
+    let cardRadius = shortSide * 0.055
+
+    func point(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
+        CGPoint(x: rect.minX + x * width, y: rect.minY + y * height)
+    }
+    func line(_ x1: CGFloat, _ y1: CGFloat, _ x2: CGFloat, _ y2: CGFloat) {
+        path.move(to: point(x1, y1)); path.addLine(to: point(x2, y2))
+    }
+    func outline(_ left: CGFloat, _ top: CGFloat, _ right: CGFloat, _ bottom: CGFloat, radius: CGFloat = 0) {
+        let shape = CGRect(x: rect.minX + left * width, y: rect.minY + top * height,
+                           width: (right - left) * width, height: (bottom - top) * height)
+        path.addRoundedRect(in: shape, cornerSize: CGSize(width: radius, height: radius))
+    }
+    func rows(_ left: CGFloat, _ top: CGFloat, _ right: CGFloat, _ count: Int, _ bottom: CGFloat) {
+        guard count > 0 else { return }
+        let gap = (bottom - top) / CGFloat(count)
+        for index in 0..<count {
+            let y = top + gap * (CGFloat(index) + 0.5)
+            line(left, y, right, y)
+        }
+    }
+
+    switch template.id {
+    case "single-card":
+        outline(0.07, 0.19, 0.30, 0.81, radius: cardRadius * 0.3)
+        line(0.39, 0.29, 0.91, 0.29); rows(0.39, 0.37, 0.86, 4, 0.76)
+    case "id-card":
+        outline(0.09, 0.31, 0.25, 0.54, radius: shortSide * 0.012)
+        outline(0.75, 0.20, 0.91, 0.80, radius: shortSide * 0.012)
+        line(0.32, 0.27, 0.68, 0.27); rows(0.32, 0.34, 0.68, 4, 0.75)
+    case "double-card":
+        line(0.5, 0.06, 0.5, 0.94)
+        outline(0.025, 0.10, 0.475, 0.90, radius: cardRadius * 0.55)
+        outline(0.525, 0.10, 0.975, 0.90, radius: cardRadius * 0.55)
+        outline(0.06, 0.27, 0.17, 0.73, radius: shortSide * 0.01)
+        outline(0.56, 0.27, 0.67, 0.73, radius: shortSide * 0.01)
+        rows(0.21, 0.30, 0.44, 4, 0.72); rows(0.71, 0.30, 0.94, 4, 0.72)
+    case "household":
+        line(0.12, 0.19, 0.88, 0.19); rows(0.12, 0.25, 0.88, 6, 0.84)
+        line(0.38, 0.35, 0.38, 0.84); line(0.67, 0.35, 0.67, 0.84)
+    case "household-double":
+        line(0.5, 0.07, 0.5, 0.93); line(0.08, 0.20, 0.92, 0.20)
+        rows(0.08, 0.26, 0.46, 5, 0.88); rows(0.54, 0.26, 0.92, 5, 0.88)
+        line(0.26, 0.36, 0.26, 0.88); line(0.74, 0.36, 0.74, 0.88)
+    case "business-license":
+        line(0.17, 0.13, 0.83, 0.13); line(0.25, 0.20, 0.75, 0.20)
+        rows(0.15, 0.27, 0.84, 6, 0.73); outline(0.60, 0.75, 0.83, 0.92, radius: shortSide * 0.06)
+    case "passport":
+        line(0.5, 0.08, 0.5, 0.92); outline(0.08, 0.18, 0.38, 0.72, radius: shortSide * 0.015)
+        rows(0.58, 0.20, 0.91, 5, 0.63); line(0.08, 0.78, 0.92, 0.78)
+        line(0.08, 0.84, 0.92, 0.84); line(0.08, 0.90, 0.82, 0.90)
+    case "driver-license":
+        outline(0.08, 0.20, 0.30, 0.80, radius: shortSide * 0.015)
+        line(0.38, 0.24, 0.89, 0.24); rows(0.38, 0.31, 0.88, 5, 0.77)
+        line(0.61, 0.43, 0.61, 0.77)
+    case "vehicle-license":
+        line(0.09, 0.20, 0.91, 0.20); line(0.09, 0.36, 0.91, 0.36)
+        line(0.09, 0.56, 0.91, 0.56); line(0.09, 0.77, 0.91, 0.77)
+        line(0.34, 0.20, 0.34, 0.77); line(0.66, 0.20, 0.66, 0.77)
+    default:
+        outline(0.06, 0.06, 0.94, 0.94, radius: cardRadius)
+    }
+    context.stroke(path, with: .color(.white.opacity(0.82)), lineWidth: detailWidth)
+}
+
 struct CertificateScanView: View {
     var body: some View { ScanCameraView(mode: .certificate) }
 }
@@ -226,14 +398,15 @@ struct CertificateScanView: View {
 struct ScanEditorView: View {
     @EnvironmentObject private var library: ScanLibrary
     @State private var selectedID: UUID?
-    @State private var filter = ScanFilter.color
+    @State private var filter = ScanFilter.automatic
     @State private var showCrop = false
     @State private var showOCR = false
     @State private var recognizedText = ""
-    @State private var shareURL: URL?
+    @State private var shareFile: ShareFile?
     @State private var errorText: String?
     @AppStorage("defaultFilter") private var defaultFilterRaw = ScanFilter.color.rawValue
     @AppStorage("removeShadowsEnabled") private var removeShadowsEnabled = true
+    @AppStorage("exportFormat") private var exportFormat = "PDF"
     @State private var previewImage: UIImage?
     private var current: ScanPage? { library.pages.first(where: { $0.id == selectedID }) ?? library.pages.first }
     private var previewTaskID: String {
@@ -260,7 +433,10 @@ struct ScanEditorView: View {
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack {
                                 ForEach(Array(library.pages.enumerated()), id: \.element.id) { index, page in
-                                    Button { selectedID = page.id } label: {
+                                    Button {
+                                        selectedID = page.id
+                                        filter = page.filter
+                                    } label: {
                                         VStack {
                                             Image(uiImage: page.image).resizable().scaledToFill().frame(width: 70, height: 84).clipped()
                                             Text("\(index + 1)").font(.caption)
@@ -281,9 +457,15 @@ struct ScanEditorView: View {
                                 Label("删除本页", systemImage: "trash")
                             }
                         }.buttonStyle(.bordered).padding(.horizontal)
-                        Picker("滤镜", selection: $filter) {
-                            ForEach(ScanFilter.allCases) { Text($0.rawValue).tag($0) }
-                        }.pickerStyle(.segmented).padding(.horizontal)
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 8) {
+                                ForEach(ScanFilter.allCases) { mode in
+                                    Button(mode.rawValue) { filter = mode }
+                                        .buttonStyle(.bordered)
+                                        .tint(filter == mode ? .green : .secondary)
+                                }
+                            }.padding(.horizontal)
+                        }
                         Toggle("去阴影", isOn: $removeShadowsEnabled).padding(.horizontal)
                         HStack {
                             Button { showCrop = true } label: { Label("手动裁边", systemImage: "crop.rotate") }
@@ -293,8 +475,9 @@ struct ScanEditorView: View {
                             Button { Task { await runOCR(current) } } label: { Label("OCR", systemImage: "text.viewfinder") }
                         }.buttonStyle(.bordered).padding(.horizontal)
                         HStack {
-                            Button("导出 PDF") { exportPDF() }.buttonStyle(.borderedProminent)
-                            Button("导出 JPEG") { exportJPEG() }.buttonStyle(.bordered)
+                            Button("导出 \(exportFormat)") {
+                                if exportFormat == "JPEG" { exportJPEG() } else { exportPDF() }
+                            }.buttonStyle(.borderedProminent)
                             Button("打印") { printPDF() }.buttonStyle(.bordered)
                         }.padding(.bottom, 8)
                     }.padding(.top, 8)
@@ -302,7 +485,16 @@ struct ScanEditorView: View {
             }
             .navigationTitle("页面编辑").navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("清空") { library.clear(); selectedID = nil } } }
-            .onAppear { filter = ScanFilter(rawValue: defaultFilterRaw) ?? .color }
+            .onAppear {
+                filter = current?.filter ?? ScanFilter(rawValue: defaultFilterRaw) ?? .automatic
+            }
+            .onChange(of: selectedID) { _, _ in
+                if let current { filter = current.filter }
+            }
+            .onChange(of: filter) { _, selectedFilter in
+                guard let current, current.filter != selectedFilter else { return }
+                library.update(current.id) { $0.filter = selectedFilter }
+            }
             .task(id: previewTaskID) {
                 guard let current else { previewImage = nil; return }
                 let source = current.image
@@ -322,9 +514,7 @@ struct ScanEditorView: View {
                         .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("关闭") { showOCR = false } } }
                 }
             }
-            .sheet(item: Binding(get: { shareURL.map(ShareFile.init(url:)) }, set: { shareURL = $0?.url })) {
-                ShareSheet(url: $0.url)
-            }
+            .sheet(item: $shareFile) { ShareSheet(urls: $0.urls) }
             .alert("处理失败", isPresented: Binding(get: { errorText != nil }, set: { if !$0 { errorText = nil } })) {
                 Button("好") { errorText = nil }
             } message: { Text(errorText ?? "") }
@@ -359,46 +549,53 @@ struct ScanEditorView: View {
         } catch { errorText = error.localizedDescription }
     }
     private func exportPDF() {
-        let source = library.pages.map(\.image)
-        let selectedFilter = filter
+        let source = library.pages.map { ($0.image, $0.filter) }
         let shouldRemoveShadows = removeShadowsEnabled
+        let language = UserDefaults.standard.string(forKey: "ocrLanguage") ?? "zh-Hans"
         Task {
             do {
                 let processed = await Task.detached(priority: .userInitiated) {
-                    source.map { image in
-                        let filtered = ImagePipeline.filtered(image, mode: selectedFilter)
+                    source.map { page in
+                        let filtered = ImagePipeline.filtered(page.0, mode: page.1)
                         return shouldRemoveShadows ? ImagePipeline.removeShadows(filtered) : filtered
                     }
                 }.value
-                shareURL = try PDFServices.makePDF(from: processed)
+                var recognizedPages = [[RecognizedTextLine]]()
+                for image in processed {
+                    do {
+                        recognizedPages.append(try await ImagePipeline.recognizeTextLines(image, language: language))
+                    } catch {
+                        NSLog("FreeScan export OCR failed for a page: %@", error.localizedDescription as NSString)
+                        recognizedPages.append([])
+                    }
+                }
+                shareFile = ShareFile(url: try PDFServices.makePDF(from: processed, searchableText: recognizedPages))
             } catch { errorText = error.localizedDescription }
         }
     }
     private func exportJPEG() {
-        let source = library.pages.map(\.image)
-        let selectedFilter = filter
+        let source = library.pages.map { ($0.image, $0.filter) }
         let shouldRemoveShadows = removeShadowsEnabled
         Task {
             do {
                 let processed = await Task.detached(priority: .userInitiated) {
-                    source.map { image in
-                        let filtered = ImagePipeline.filtered(image, mode: selectedFilter)
+                    source.map { page in
+                        let filtered = ImagePipeline.filtered(page.0, mode: page.1)
                         return shouldRemoveShadows ? ImagePipeline.removeShadows(filtered) : filtered
                     }
                 }.value
-                shareURL = try PDFServices.makeJPEGs(from: processed).first
+                shareFile = ShareFile(urls: try PDFServices.makeJPEGs(from: processed))
             } catch { errorText = error.localizedDescription }
         }
     }
     private func printPDF() {
-        let source = library.pages.map(\.image)
-        let selectedFilter = filter
+        let source = library.pages.map { ($0.image, $0.filter) }
         let shouldRemoveShadows = removeShadowsEnabled
         Task {
             do {
                 let processed = await Task.detached(priority: .userInitiated) {
-                    source.map { image in
-                        let filtered = ImagePipeline.filtered(image, mode: selectedFilter)
+                    source.map { page in
+                        let filtered = ImagePipeline.filtered(page.0, mode: page.1)
                         return shouldRemoveShadows ? ImagePipeline.removeShadows(filtered) : filtered
                     }
                 }.value
@@ -409,14 +606,16 @@ struct ScanEditorView: View {
 }
 
 struct ShareFile: Identifiable {
-    let url: URL
-    var id: String { url.absoluteString }
+    let urls: [URL]
+    init(url: URL) { urls = [url] }
+    init(urls: [URL]) { self.urls = urls }
+    var id: String { urls.map(\.absoluteString).joined(separator: "|") }
 }
 
 struct ShareSheet: UIViewControllerRepresentable {
-    let url: URL
+    let urls: [URL]
     func makeUIViewController(context: Context) -> UIActivityViewController {
-        UIActivityViewController(activityItems: [url], applicationActivities: nil)
+        UIActivityViewController(activityItems: urls, applicationActivities: nil)
     }
     func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
 }
@@ -425,47 +624,74 @@ struct ManualCropView: View {
     @EnvironmentObject private var library: ScanLibrary
     @Environment(\.dismiss) private var dismiss
     let page: ScanPage
-    @State private var left = 0.02
-    @State private var top = 0.02
-    @State private var right = 0.98
-    @State private var bottom = 0.98
+    @State private var corners = [
+        CGPoint(x: 0.03, y: 0.03), CGPoint(x: 0.97, y: 0.03),
+        CGPoint(x: 0.97, y: 0.97), CGPoint(x: 0.03, y: 0.97),
+    ]
+    @State private var activeCorner: Int?
+    @State private var dragStart: CGPoint?
     var body: some View {
         NavigationStack {
             VStack(spacing: 12) {
+                Text("拖动四个绿色控制点，对齐纸张四角")
+                    .font(.footnote).foregroundStyle(.secondary)
                 GeometryReader { proxy in
-                    let fitted = AVMakeRect(aspectRatio: page.image.size, insideRect: proxy.frame(in: .local))
-                    ZStack(alignment: .topLeading) {
+                    let fitted = AVMakeRect(aspectRatio: page.image.size,
+                                            insideRect: CGRect(origin: .zero, size: proxy.size))
+                    ZStack {
                         Image(uiImage: page.image).resizable().scaledToFit()
-                        Rectangle().stroke(.green, lineWidth: 3)
-                            .frame(width: fitted.width * (right - left), height: fitted.height * (bottom - top))
-                            .position(x: fitted.minX + fitted.width * (left + right) / 2,
-                                      y: fitted.minY + fitted.height * (top + bottom) / 2)
+                        Canvas { context, _ in
+                            guard corners.count == 4, let first = corners.first else { return }
+                            func screenPoint(_ point: CGPoint) -> CGPoint {
+                                CGPoint(x: fitted.minX + point.x * fitted.width,
+                                        y: fitted.minY + point.y * fitted.height)
+                            }
+                            var path = Path()
+                            path.move(to: screenPoint(first))
+                            corners.dropFirst().forEach { path.addLine(to: screenPoint($0)) }
+                            path.closeSubpath()
+                            context.stroke(path, with: .color(.green), lineWidth: 3)
+                        }
+                        ForEach(corners.indices, id: \.self) { index in
+                            Circle()
+                                .fill(Color.green)
+                                .overlay(Circle().stroke(.white, lineWidth: 2))
+                                .frame(width: 28, height: 28)
+                                .position(x: fitted.minX + corners[index].x * fitted.width,
+                                          y: fitted.minY + corners[index].y * fitted.height)
+                                .gesture(DragGesture(minimumDistance: 0)
+                                    .onChanged { value in
+                                        if activeCorner != index {
+                                            activeCorner = index
+                                            dragStart = corners[index]
+                                        }
+                                        guard let dragStart else { return }
+                                        corners[index] = CGPoint(
+                                            x: min(1, max(0, dragStart.x + value.translation.width / max(1, fitted.width))),
+                                            y: min(1, max(0, dragStart.y + value.translation.height / max(1, fitted.height)))
+                                        )
+                                    }
+                                    .onEnded { _ in
+                                        activeCorner = nil
+                                        dragStart = nil
+                                    })
+                        }
                     }
                 }.frame(maxHeight: 360)
-                cropSlider("左", value: $left, in: 0...max(0.1, right - 0.08))
-                cropSlider("上", value: $top, in: 0...max(0.1, bottom - 0.08))
-                cropSlider("右", value: $right, in: min(0.9, left + 0.08)...1)
-                cropSlider("下", value: $bottom, in: min(0.9, top + 0.08)...1)
                 Spacer()
             }.padding().navigationTitle("手动裁边")
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
                     ToolbarItem(placement: .confirmationAction) {
                         Button("应用") {
-                            let rect = CGRect(x: left, y: top, width: right - left, height: bottom - top)
-                            let cropped = ImagePipeline.crop(page.image, normalizedRect: rect)
+                            let quad = DocumentQuad(topLeft: corners[0], topRight: corners[1],
+                                                    bottomRight: corners[2], bottomLeft: corners[3])
+                            let cropped = ImagePipeline.perspectiveCrop(page.image, quad: quad)
                             library.update(page.id) { $0.image = cropped; $0.original = cropped }
                             dismiss()
                         }
                     }
                 }
-        }
-    }
-    private func cropSlider(_ title: String, value: Binding<Double>, in range: ClosedRange<Double>) -> some View {
-        HStack {
-            Text(title).frame(width: 28)
-            Slider(value: value, in: range)
-            Text("\(Int(value.wrappedValue * 100))%").font(.caption).frame(width: 38)
         }
     }
 }
@@ -551,17 +777,137 @@ struct ManualRepairView: View {
     }
 }
 
+struct BrushEraserView: View {
+    @Environment(\.dismiss) private var dismiss
+    let image: UIImage
+    let onApply: (UIImage) -> Void
+    @State private var strokes: [LocalRepairStroke] = []
+    @State private var redoStrokes: [LocalRepairStroke] = []
+    @State private var activePoints: [CGPoint] = []
+    @State private var brushWidth: CGFloat = 0.022
+    @State private var isWorking = false
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 12) {
+                GeometryReader { proxy in
+                    let fitted = AVMakeRect(aspectRatio: image.size,
+                                            insideRect: CGRect(origin: .zero, size: proxy.size))
+                    ZStack {
+                        Image(uiImage: image).resizable().scaledToFit()
+                        Canvas { context, _ in
+                            for stroke in strokes + [LocalRepairStroke(points: activePoints, width: brushWidth)] {
+                                guard let first = stroke.points.first else { continue }
+                                var path = Path()
+                                let point = CGPoint(x: fitted.minX + first.x * fitted.width,
+                                                    y: fitted.minY + first.y * fitted.height)
+                                path.move(to: point)
+                                if stroke.points.count == 1 {
+                                    path.addLine(to: CGPoint(x: point.x + 0.1, y: point.y + 0.1))
+                                } else {
+                                    for normalized in stroke.points.dropFirst() {
+                                        path.addLine(to: CGPoint(x: fitted.minX + normalized.x * fitted.width,
+                                                                 y: fitted.minY + normalized.y * fitted.height))
+                                    }
+                                }
+                                let lineWidth = max(3, stroke.width * min(fitted.width, fitted.height))
+                                context.stroke(path, with: .color(.red.opacity(0.8)),
+                                               style: StrokeStyle(lineWidth: lineWidth, lineCap: .round, lineJoin: .round))
+                            }
+                        }
+                    }
+                    .contentShape(Rectangle())
+                    .gesture(
+                        DragGesture(minimumDistance: 0, coordinateSpace: .local)
+                            .onChanged { value in
+                                guard let point = normalized(value.location, in: proxy.size) else { return }
+                                if activePoints.isEmpty || hypot(activePoints.last!.x - point.x,
+                                                                  activePoints.last!.y - point.y) > 0.001 {
+                                    activePoints.append(point)
+                                }
+                            }
+                            .onEnded { _ in
+                                if !activePoints.isEmpty {
+                                    strokes.append(LocalRepairStroke(points: activePoints, width: brushWidth))
+                                    redoStrokes.removeAll()
+                                    activePoints.removeAll()
+                                }
+                            }
+                    )
+                }
+                Text("涂抹需要修复的笔迹；修复使用本地纸张邻域估色。")
+                    .font(.footnote).foregroundStyle(.secondary)
+                HStack {
+                    Text("笔刷")
+                    Slider(value: $brushWidth, in: 0.008...0.065)
+                    Text("\(Int(brushWidth * 1000))‰").monospacedDigit().frame(width: 52, alignment: .trailing)
+                }
+                HStack {
+                    Button("撤销", systemImage: "arrow.uturn.backward") {
+                        if let stroke = strokes.popLast() { redoStrokes.append(stroke) }
+                    }.disabled(strokes.isEmpty || isWorking)
+                    Button("重做", systemImage: "arrow.uturn.forward") {
+                        if let stroke = redoStrokes.popLast() { strokes.append(stroke) }
+                    }.disabled(redoStrokes.isEmpty || isWorking)
+                    Button("清除", systemImage: "trash") {
+                        strokes.removeAll(); redoStrokes.removeAll(); activePoints.removeAll()
+                    }.disabled(strokes.isEmpty && activePoints.isEmpty || isWorking)
+                    Spacer()
+                    Button(isWorking ? "修复中…" : "应用修复") { applyRepair() }
+                        .buttonStyle(.borderedProminent).disabled(strokes.isEmpty || isWorking)
+                }
+                .buttonStyle(.bordered)
+            }
+            .padding()
+            .navigationTitle("手动涂抹修复")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .topBarLeading) { Button("取消") { dismiss() } } }
+        }
+    }
+
+    private func normalized(_ point: CGPoint, in size: CGSize) -> CGPoint? {
+        let fitted = AVMakeRect(aspectRatio: image.size, insideRect: CGRect(origin: .zero, size: size))
+        guard fitted.contains(point), fitted.width > 0, fitted.height > 0 else { return nil }
+        return CGPoint(x: min(1, max(0, (point.x - fitted.minX) / fitted.width)),
+                       y: min(1, max(0, (point.y - fitted.minY) / fitted.height)))
+    }
+
+    private func applyRepair() {
+        guard !strokes.isEmpty else { return }
+        isWorking = true
+        let source = image
+        let selectedStrokes = strokes
+        Task {
+            let repaired = await Task.detached(priority: .userInitiated) {
+                ImagePipeline.repair(source, strokes: selectedStrokes)
+            }.value
+            onApply(repaired)
+            isWorking = false
+            dismiss()
+        }
+    }
+}
+
 struct DocumentsView: View {
     @EnvironmentObject private var library: ScanLibrary
     @State private var showImporter = false
+    @State private var showEditor = false
+    @State private var searchText = ""
     @State private var errorText: String?
-    @State private var shareURL: URL?
+    @State private var shareFile: ShareFile?
     @State private var pdfPendingDeletion: URL?
     @State private var showDeleteConfirmation = false
+    @State private var pdfPendingRename: URL?
+    @State private var renameText = ""
+    @State private var showRenameDialog = false
     private var savedPDFs: [URL] {
         let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
         return (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil))?
             .filter { $0.pathExtension.lowercased() == "pdf" }.sorted { $0.lastPathComponent > $1.lastPathComponent } ?? []
+    }
+    private var visiblePDFs: [URL] {
+        guard !searchText.isEmpty else { return savedPDFs }
+        return savedPDFs.filter { $0.deletingPathExtension().lastPathComponent.localizedCaseInsensitiveContains(searchText) }
     }
     var body: some View {
         NavigationStack {
@@ -572,8 +918,9 @@ struct DocumentsView: View {
                     }
                 }
                 Section("最近导出 PDF") {
-                    if savedPDFs.isEmpty { Text("导出的文件会显示在这里。").foregroundStyle(.secondary) }
-                    ForEach(savedPDFs, id: \.absoluteString) { url in
+                    if visiblePDFs.isEmpty { Text(searchText.isEmpty ? "导出的文件会显示在这里。" : "没有匹配的 PDF。")
+                        .foregroundStyle(.secondary) }
+                    ForEach(visiblePDFs, id: \.absoluteString) { url in
                         HStack {
                             Image(systemName: "doc.richtext")
                             Text(url.lastPathComponent).lineLimit(1)
@@ -581,7 +928,12 @@ struct DocumentsView: View {
                             Button("打开") { open(url) }
                             Menu {
                                 Button("打印", systemImage: "printer") { PDFServices.printPDF(at: url) }
-                                Button("共享", systemImage: "square.and.arrow.up") { shareURL = url }
+                                Button("共享", systemImage: "square.and.arrow.up") { shareFile = ShareFile(url: url) }
+                                Button("重命名", systemImage: "pencil") {
+                                    pdfPendingRename = url
+                                    renameText = url.deletingPathExtension().lastPathComponent
+                                    showRenameDialog = true
+                                }
                                 Button("删除", systemImage: "trash", role: .destructive) {
                                     pdfPendingDeletion = url
                                     showDeleteConfirmation = true
@@ -593,6 +945,8 @@ struct DocumentsView: View {
                 Section { Button { showImporter = true } label: { Label("导入 PDF 进行编辑", systemImage: "folder.badge.plus") } }
             }
             .navigationTitle("文档")
+            .searchable(text: $searchText, prompt: "搜索 PDF")
+            .navigationDestination(isPresented: $showEditor) { ScanEditorView() }
             .fileImporter(isPresented: $showImporter, allowedContentTypes: [.pdf]) { result in
                 guard case .success(let url) = result else { return }
                 open(url)
@@ -604,16 +958,43 @@ struct DocumentsView: View {
                 Button("删除", role: .destructive) { deletePendingPDF() }
                 Button("取消", role: .cancel) { pdfPendingDeletion = nil }
             }
-            .sheet(item: Binding(get: { shareURL.map(ShareFile.init(url:)) }, set: { shareURL = $0?.url })) {
-                ShareSheet(url: $0.url)
+            .alert("重命名 PDF", isPresented: $showRenameDialog) {
+                TextField("文件名", text: $renameText)
+                Button("保存") { renamePendingPDF() }
+                Button("取消", role: .cancel) { pdfPendingRename = nil }
             }
+            .sheet(item: $shareFile) { ShareSheet(urls: $0.urls) }
         }
     }
     private func open(_ url: URL) {
         let access = url.startAccessingSecurityScopedResource()
         defer { if access { url.stopAccessingSecurityScopedResource() } }
-        do { library.clear(); library.add(contentsOf: try PDFServices.images(from: url)) }
+        do {
+            let pages = try PDFServices.images(from: url)
+            guard !pages.isEmpty else { throw NSError(domain: "FreeScan.PDF", code: 3,
+                userInfo: [NSLocalizedDescriptionKey: "PDF 中没有可编辑页面。"]) }
+            library.clear()
+            library.add(contentsOf: pages)
+            showEditor = true
+        }
         catch { errorText = error.localizedDescription }
+    }
+    private func renamePendingPDF() {
+        guard let source = pdfPendingRename else { return }
+        let name = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, !name.contains("/"), !name.contains("\\") else {
+            errorText = "请输入有效的文件名。"
+            return
+        }
+        let target = source.deletingLastPathComponent().appendingPathComponent(name).appendingPathExtension("pdf")
+        guard target != source else { pdfPendingRename = nil; return }
+        guard !FileManager.default.fileExists(atPath: target.path) else {
+            errorText = "已有同名文件，请换一个名称。"
+            return
+        }
+        do { try FileManager.default.moveItem(at: source, to: target) }
+        catch { errorText = error.localizedDescription }
+        pdfPendingRename = nil
     }
     private func deletePendingPDF() {
         guard let url = pdfPendingDeletion else { return }
@@ -628,10 +1009,11 @@ struct WatermarkToolView: View {
     @State private var images: [UIImage] = []
     @State private var selectedIndex = 0
     @State private var message: String?
-    @State private var shareURL: URL?
+    @State private var shareFile: ShareFile?
     @State private var showImporter = false
     @State private var showManualRepair = false
     @State private var errorText: String?
+    @AppStorage("exportFormat") private var exportFormat = "PDF"
     private var image: UIImage? { images.indices.contains(selectedIndex) ? images[selectedIndex] : nil }
 
     var body: some View {
@@ -661,8 +1043,9 @@ struct WatermarkToolView: View {
                     .buttonStyle(.borderedProminent)
                 Button("手动框选修复") { showManualRepair = true }.buttonStyle(.bordered)
                 HStack {
-                    Button("导出 PDF") { exportPDF() }.buttonStyle(.bordered)
-                    Button("导出 JPEG") { exportJPEG() }.buttonStyle(.bordered)
+                    Button("导出 \(exportFormat)") {
+                        if exportFormat == "JPEG" { exportJPEG() } else { exportPDF() }
+                    }.buttonStyle(.bordered)
                 }
             }
             if let message { Text(message).font(.caption).foregroundStyle(.secondary) }
@@ -690,9 +1073,7 @@ struct WatermarkToolView: View {
                 }
             }
         }
-        .sheet(item: Binding(get: { shareURL.map(ShareFile.init(url:)) }, set: { shareURL = $0?.url })) {
-            ShareSheet(url: $0.url)
-        }
+        .sheet(item: $shareFile) { ShareSheet(urls: $0.urls) }
         .alert("处理失败", isPresented: Binding(get: { errorText != nil }, set: { if !$0 { errorText = nil } })) {
             Button("好") { errorText = nil }
         } message: { Text(errorText ?? "") }
@@ -727,12 +1108,12 @@ struct WatermarkToolView: View {
     }
 
     private func exportPDF() {
-        do { shareURL = try PDFServices.makePDF(from: images, title: "FreeScan QR 修复") }
+        do { shareFile = ShareFile(url: try PDFServices.makePDF(from: images, title: "FreeScan QR 修复")) }
         catch { errorText = error.localizedDescription }
     }
 
     private func exportJPEG() {
-        do { shareURL = try PDFServices.makeJPEGs(from: images).first }
+        do { shareFile = ShareFile(urls: try PDFServices.makeJPEGs(from: images)) }
         catch { errorText = error.localizedDescription }
     }
 }
@@ -741,22 +1122,32 @@ struct HandwritingToolView: View {
     @State private var item: PhotosPickerItem?
     @State private var image: UIImage?
     @State private var original: UIImage?
-    @State private var shareURL: URL?
+    @State private var shareFile: ShareFile?
     @State private var showManualRepair = false
+    @State private var showingOriginal = false
     var body: some View {
         VStack(spacing: 14) {
             Text("试卷擦除").font(.title2.bold())
-            Text("本地彩色笔迹自动处理；残留的彩笔或黑色笔迹可手动框选修复。")
+            Text("本地彩色笔迹自动处理；残留的彩笔或黑色笔迹可手动涂抹修复。")
                 .font(.footnote).foregroundStyle(.secondary)
-            if let image { Image(uiImage: image).resizable().scaledToFit().frame(maxHeight: 460) }
+            if let image {
+                Image(uiImage: showingOriginal ? (original ?? image) : image)
+                    .resizable().scaledToFit().frame(maxHeight: 460)
+                Button(showingOriginal ? "查看修复结果" : "对比原图") { showingOriginal.toggle() }
+                    .buttonStyle(.bordered)
+            }
             else { ContentUnavailableView("选择试卷图片", systemImage: "pencil.tip.crop.circle") }
             PhotosPicker("选择图片", selection: $item, matching: .images).buttonStyle(.bordered)
             if let original {
-                Button("自动擦除彩色笔迹") { image = ImagePipeline.removeColoredInk(original) }
+                Button("自动擦除彩色笔迹") { image = ImagePipeline.removeColoredInk(original); showingOriginal = false }
                     .buttonStyle(.borderedProminent)
-                Button("手动框选修复") { showManualRepair = true }.buttonStyle(.bordered)
-                Button("恢复原图") { image = original }
-                Button("导出修复结果") { if let image { shareURL = try? PDFServices.makeJPEGs(from: [image]).first } }
+                Button("手动涂抹修复") { showManualRepair = true }.buttonStyle(.bordered)
+                Button("恢复原图") { image = original; showingOriginal = false }
+                Button("导出修复结果") {
+                    if let image, let url = try? PDFServices.makeJPEGs(from: [image]).first {
+                        shareFile = ShareFile(url: url)
+                    }
+                }
                     .buttonStyle(.bordered)
             }
             Spacer()
@@ -765,16 +1156,14 @@ struct HandwritingToolView: View {
                 guard let value else { return }
                 Task {
                     if let data = try? await value.loadTransferable(type: Data.self), let loaded = UIImage(data: data) {
-                        original = loaded; image = loaded
+                        original = loaded; image = loaded; showingOriginal = false
                     }
                 }
             }
-            .sheet(item: Binding(get: { shareURL.map(ShareFile.init(url:)) }, set: { shareURL = $0?.url })) {
-                ShareSheet(url: $0.url)
-            }
+            .sheet(item: $shareFile) { ShareSheet(urls: $0.urls) }
             .sheet(isPresented: $showManualRepair) {
                 if let image {
-                    ManualRepairView(image: image) { repaired in self.image = repaired }
+                    BrushEraserView(image: image) { repaired in self.image = repaired; showingOriginal = false }
                 }
             }
     }
@@ -783,9 +1172,11 @@ struct HandwritingToolView: View {
 struct SettingsView: View {
     @AppStorage("autoCropEnabled") private var autoCropEnabled = true
     @AppStorage("removeShadowsEnabled") private var removeShadowsEnabled = true
-    @AppStorage("defaultFilter") private var defaultFilter = ScanFilter.color.rawValue
+    @AppStorage("defaultFilter") private var defaultFilter = ScanFilter.automatic.rawValue
     @AppStorage("ocrLanguage") private var ocrLanguage = "zh-Hans"
     @AppStorage("exportQuality") private var exportQuality = 0.92
+    @AppStorage("scanResolution") private var scanResolution = CameraResolutionPreset.fourK.rawValue
+    @AppStorage("exportFormat") private var exportFormat = "PDF"
     var body: some View {
         NavigationStack {
             Form {
@@ -795,19 +1186,28 @@ struct SettingsView: View {
                     Picker("默认滤镜", selection: $defaultFilter) {
                         ForEach(ScanFilter.allCases) { Text($0.rawValue).tag($0.rawValue) }
                     }
-                    LabeledContent("分辨率", value: "相机原始分辨率")
+                    Picker("扫描分辨率", selection: $scanResolution) {
+                        ForEach(CameraResolutionPreset.allCases) { preset in
+                            Text(preset.rawValue).tag(preset.rawValue)
+                        }
+                    }
                 }
                 Section("导出") {
                     Picker("JPEG 质量", selection: $exportQuality) {
                         Text("高").tag(0.96); Text("平衡").tag(0.92); Text("小文件").tag(0.82)
                     }
-                    LabeledContent("格式", value: "PDF / JPEG")
+                    Picker("默认格式", selection: $exportFormat) {
+                        Text("PDF").tag("PDF")
+                        Text("JPEG").tag("JPEG")
+                    }
                 }
                 Section("文字识别") {
                     Picker("识别语言", selection: $ocrLanguage) {
-                        Text("简体中文").tag("zh-Hans")
-                        Text("繁体中文").tag("zh-Hant")
-                        Text("英语").tag("en-US")
+                        Text("自动识别").tag("auto")
+                        ForEach(ImagePipeline.supportedOCRLanguages(), id: \.self) { language in
+                            Text(Locale.current.localizedString(forIdentifier: language) ?? language)
+                                .tag(language)
+                        }
                     }
                     Text("Vision OCR 在设备上运行，不会上传图像。").font(.caption).foregroundStyle(.secondary)
                 }

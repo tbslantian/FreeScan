@@ -48,11 +48,11 @@ GitHub Actions 在推送到 `main` 后运行许可证检查、项目检查和 Re
 
 ## iOS 版本
 
-原生 SwiftUI 工程放在 ios/ 子目录，与 Android Gradle 工程分开。修改 ios/ 后由 GitHub Actions 的 macOS runner 单独构建；纯 iOS 提交不会触发 Android CI。
+原生 SwiftUI 工程放在 `ios/` 子目录，与 Android Gradle 工程分开。修改 `ios/` 后由 GitHub Actions 的 macOS runner 单独归档并导出签名 IPA；纯 iOS 提交不会触发 Android CI。工作流不上传模拟器包。
 
-在仓库的 Actions → iOS CI 中下载 FreeScan-iOS-Simulator artifact，可在 iOS Simulator 中运行。该构建未签名，不能直接安装到实体 iPhone。要生成可安装或发布的 IPA，需要 Apple 开发者证书和 provisioning profile。
+配置 Apple Distribution `.p12` 证书、密码、App Store Connect provisioning profile、Team ID 和匹配的 Bundle ID 到 GitHub Actions Repository Secrets 后，在 Actions → **iOS IPA** 下载 `FreeScan-iOS-IPA`。IPA 可通过 Transporter 上传到 App Store Connect，再用于 TestFlight 或 App Store 发布。Apple 签名文件和密码不要提交到仓库。
 
-工程和 iOS 平台说明见 [ios/README.md](ios/README.md)。
+工程、签名 Secret 名称和功能说明见 [ios/README.md](ios/README.md)。
 
 ## 技术栈
 

@@ -28,26 +28,66 @@ enum PDFServices {
         }
     }
 
-    static func makePDF(from images: [UIImage], title: String = "FreeScan") throws -> URL {
+    static func makePDF(from images: [UIImage], title: String = "FreeScan",
+                        searchableText: [[RecognizedTextLine]]? = nil) throws -> URL {
         guard !images.isEmpty else {
             throw NSError(domain: "FreeScan.PDF", code: 2,
                           userInfo: [NSLocalizedDescriptionKey: "没有可导出的页面。"])
         }
         let output = documentsDirectory.appendingPathComponent("FreeScan-\(UUID().uuidString).pdf")
-        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 612, height: 792))
+        // Match Android's per-page geometry: preserve each scan's aspect ratio and
+        // constrain its longest edge to A4 height and its shortest edge to Letter width.
+        // This allows portrait and landscape pages to coexist in one PDF.
+        let maxPageEdge: CGFloat = 297 * 72 / 25.4
+        let minPageEdge: CGFloat = 215.9 * 72 / 25.4
+        let pageBounds = CGRect(x: 0, y: 0, width: maxPageEdge, height: maxPageEdge)
+        let renderer = UIGraphicsPDFRenderer(bounds: pageBounds)
         let data = renderer.pdfData { context in
-            for image in images {
-                let pageSize = CGSize(width: 612, height: max(396, min(864, 612 * image.size.height / max(1, image.size.width))))
+            for (index, image) in images.enumerated() {
+                let imageWidth = max(1, image.size.width)
+                let imageHeight = max(1, image.size.height)
+                let longEdge = max(imageWidth, imageHeight)
+                let shortEdge = min(imageWidth, imageHeight)
+                let scale = min(1, min(maxPageEdge / longEdge, minPageEdge / shortEdge))
+                let pageSize = CGSize(width: imageWidth * scale, height: imageHeight * scale)
                 context.beginPage(withBounds: CGRect(origin: .zero, size: pageSize), pageInfo: [
                     kCGPDFContextTitle as String: title,
                     kCGPDFContextCreator as String: "FreeScan iOS",
                 ])
                 let fitted = AVMakeRect(aspectRatio: image.size, insideRect: CGRect(origin: .zero, size: pageSize))
                 image.draw(in: fitted)
+                if let searchableText, searchableText.indices.contains(index) {
+                    drawInvisibleText(searchableText[index], in: fitted, context: context.cgContext)
+                }
             }
         }
         try data.write(to: output, options: .atomic)
         return output
+    }
+
+    private static func drawInvisibleText(_ lines: [RecognizedTextLine], in imageRect: CGRect, context: CGContext) {
+        context.saveGState()
+        context.setTextDrawingMode(.invisible)
+        for line in lines where !line.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let bounds = line.bounds.standardized.intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
+            guard bounds.width > 0, bounds.height > 0 else { continue }
+            let textRect = CGRect(
+                x: imageRect.minX + bounds.minX * imageRect.width,
+                y: imageRect.minY + (1 - bounds.maxY) * imageRect.height,
+                width: max(1, bounds.width * imageRect.width),
+                height: max(1, bounds.height * imageRect.height)
+            )
+            let fontSize = max(4, min(72, textRect.height * 0.82))
+            let attributed = NSAttributedString(
+                string: line.text,
+                attributes: [
+                    .font: UIFont.systemFont(ofSize: fontSize),
+                    .foregroundColor: UIColor.black,
+                ]
+            )
+            attributed.draw(with: textRect, options: [.usesLineFragmentOrigin, .usesFontLeading], context: nil)
+        }
+        context.restoreGState()
     }
 
     static func makeJPEGs(from images: [UIImage], quality: CGFloat? = nil) throws -> [URL] {

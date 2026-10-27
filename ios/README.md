@@ -10,7 +10,8 @@ This is the native SwiftUI companion project for the Android FreeScan app. It ha
 - PDF import as editable image pages, PDF/JPEG export, Files sharing, and AirPrint.
 - On-device Vision OCR for Simplified Chinese, Traditional Chinese, and English.
 - QR detection, Quark blue-footer compatibility detection, and local region repair for images and imported PDFs, plus multi-region manual repair.
-- Local colored-ink heuristic cleanup and manual region repair for exam pages.
+- Local colored-ink heuristic cleanup and a brush eraser with undo/redo and before/after comparison for exam pages.
+- Camera document candidate outline, flash/torch controls, and 1080p/2K/4K scan output sizing.
 - Local settings for auto-crop, default filter, OCR language, and export quality.
 
 Image-based PDF editing rasterizes imported pages before editing. QR repair uses local border interpolation and works best on small marks over smooth backgrounds; it is not content-aware inpainting. Colored handwriting removal is a color heuristic and may affect colored print; manual repair is available for residual marks.
@@ -19,11 +20,23 @@ Image-based PDF editing rasterizes imported pages before editing. QR repair uses
 
 The iOS implementation uses Apple Vision, Core Image, AVFoundation, PDFKit, PhotosUI, and UIKit. It is a native port of the user-facing workflows; it does not reuse Android-only OpenCV/LiteRT/Tesseract binaries. OCR uses the on-device Vision recognizer instead of downloadable Tesseract language packs. PDF pages are rasterized for editing, so selectable text and original vector content are not preserved in an edited export. The automatic Quark compatibility check covers the blue footer heuristic and QR codes; it is not a byte-for-byte port of the Android multi-detector pipeline.
 
-## Build
+## Device IPA build
 
-Open FreeScan.xcodeproj on a Mac with Xcode 15 or newer. Select the FreeScan scheme and an iOS simulator or device, then build. For device distribution, set your Apple Developer Team and signing identity in Xcode.
+The GitHub Actions workflow builds a signed iPhone/iPad archive and exports an App Store Connect IPA. It does not produce a simulator build. The Release target is universal for iPhone and iPad (`TARGETED_DEVICE_FAMILY = 1,2`).
 
-The source was prepared on Windows and could not be compiled with Xcode in this environment. Build and device validation must be completed on macOS.
+Configure these GitHub Actions repository secrets before running the `iOS IPA` workflow:
+
+- `IOS_CERTIFICATE_P12_BASE64`: Base64 content of an Apple Distribution `.p12` certificate.
+- `IOS_CERTIFICATE_PASSWORD`: Password used when exporting the `.p12` file.
+- `IOS_PROVISIONING_PROFILE_BASE64`: Base64 content of an App Store Connect provisioning profile.
+- `IOS_TEAM_ID`: Apple Developer Team ID that owns the certificate and profile.
+- `IOS_BUNDLE_ID`: Explicit App ID / bundle identifier matching the provisioning profile. The default project bundle ID is `org.freescan.app`; use a registered identifier owned by your Apple Developer team.
+
+The IPA artifact is signed for App Store Connect and can be uploaded using Transporter or App Store Connect. Exporting an App Store Connect IPA does not itself submit the app or publish it to TestFlight. Apple distribution signing requires an Apple Distribution certificate and matching provisioning profile. Do not commit those files or passwords to the repository.
+
+The source was prepared on Windows and cannot be compiled with Xcode in this environment. The macOS GitHub Actions runner performs the archive and IPA export.
+
+The iOS implementation is not yet at complete Android feature parity. See [ANDROID_PARITY.md](ANDROID_PARITY.md) for the audited remaining work; the presence of an IPA build does not imply that this feature migration is complete.
 
 ## License
 
