@@ -29,12 +29,13 @@ enum PDFServices {
     }
 
     static func makePDF(from images: [UIImage], title: String = "FreeScan",
-                        searchableText: [[RecognizedTextLine]]? = nil) throws -> URL {
+                        searchableText: [[RecognizedTextLine]]? = nil,
+                        filename: String? = nil) throws -> URL {
         guard !images.isEmpty else {
             throw NSError(domain: "FreeScan.PDF", code: 2,
                           userInfo: [NSLocalizedDescriptionKey: "没有可导出的页面。"])
         }
-        let output = documentsDirectory.appendingPathComponent("FreeScan-\(UUID().uuidString).pdf")
+        let output = uniqueDocumentURL(baseName: filename ?? "FreeScan-\(UUID().uuidString)", extension: "pdf")
         // Match Android's per-page geometry: preserve each scan's aspect ratio and
         // constrain its longest edge to A4 height and its shortest edge to Letter width.
         // This allows portrait and landscape pages to coexist in one PDF.
@@ -90,12 +91,14 @@ enum PDFServices {
         context.restoreGState()
     }
 
-    static func makeJPEGs(from images: [UIImage], quality: CGFloat? = nil) throws -> [URL] {
+    static func makeJPEGs(from images: [UIImage], quality: CGFloat? = nil,
+                          baseName: String? = nil) throws -> [URL] {
         let configuredQuality = UserDefaults.standard.object(forKey: "exportQuality") as? Double ?? 0.92
         let compressionQuality = min(1, max(0.1, quality ?? CGFloat(configuredQuality)))
         return try images.enumerated().map { index, image in
-            let url = documentsDirectory
-                .appendingPathComponent("FreeScan-\(index + 1)-\(UUID().uuidString).jpg")
+            let stem = baseName ?? "FreeScan-\(UUID().uuidString)"
+            let pageName = images.count == 1 ? stem : "\(stem)_\(index + 1)"
+            let url = uniqueDocumentURL(baseName: pageName, extension: "jpg")
             guard let data = image.jpegData(compressionQuality: compressionQuality) else {
                 throw NSError(domain: "FreeScan.Image", code: 1,
                               userInfo: [NSLocalizedDescriptionKey: "无法编码 JPEG 页面。"])
@@ -103,6 +106,25 @@ enum PDFServices {
             try data.write(to: url, options: .atomic)
             return url
         }
+    }
+
+    private static func uniqueDocumentURL(baseName: String, extension fileExtension: String) -> URL {
+        let invalid = CharacterSet(charactersIn: "/\\:*?\"<>|")
+        var cleaned = baseName.components(separatedBy: invalid).joined(separator: "_")
+            .trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: ".")))
+        for suffix in [".pdf", ".jpeg", ".jpg"] where cleaned.lowercased().hasSuffix(suffix) {
+            cleaned.removeLast(suffix.count)
+            break
+        }
+        let stem = cleaned.isEmpty ? "FreeScan-\(UUID().uuidString)" : cleaned
+        var candidate = documentsDirectory.appendingPathComponent(stem).appendingPathExtension(fileExtension)
+        var suffix = 2
+        while FileManager.default.fileExists(atPath: candidate.path) {
+            candidate = documentsDirectory.appendingPathComponent("\(stem) (\(suffix))")
+                .appendingPathExtension(fileExtension)
+            suffix += 1
+        }
+        return candidate
     }
 
     static func printPDF(at url: URL) {

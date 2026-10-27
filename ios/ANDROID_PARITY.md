@@ -16,18 +16,21 @@ Status is based on the current Android screens and services under `app/src/main/
 
 - [x] Camera: throttled Vision rectangle detection, a smoothed four-corner perspective outline, 1080p/2K/4K output sizing, flash modes, and torch control.
 - [x] Camera: optional three-frame capture that retains the sharpest frame.
-- [ ] Camera: match Android's outlier-resistant quad stabilizer and hardware volume-key shutter.
+- [x] Camera: match Android's three-consecutive-frame quad stabilizer and its 20 px movement threshold on a 640×480 reference preview.
+- [ ] Camera: hardware volume-key shutter; the on-screen shutter remains available on iOS.
 - [x] Editor: draggable four-corner perspective crop instead of only rectangular edge sliders.
 - [x] Camera workflow: capture review/retake, continuous multi-page capture, and multiple-photo import in one operation.
 - [x] Certificate scanner: nine template names, template-specific live preview aspect ratios, and matching document-field guide drawings.
-- [ ] Certificate scanning: use each selected template's actual crop geometry and dimensions, preserve front/back pairs, and match Android certificate print layout/adaptation.
+- [x] Certificate scanning: keep Android's nine guide ratios and generic document rectification path, alternate front/back capture prompts, and export through the same mixed-orientation A4/Letter PDF path. Android does not apply a separate physical crop size per template.
 - [x] Drafts: persist unfinished scan pages across app restarts.
 - [x] Library: search, open into the editor, rename, print, share, and delete saved PDFs.
-- [ ] Library: match Android's richer file metadata and ordering behavior.
+- [x] Library: show file size and modified date for app-local PDFs and sort newest first.
+- [ ] Library: discover imported PDF references and PDFs in user-selected external folders as Android does.
 - [x] Export: share every page in multi-page JPEG exports instead of silently sharing only the first page.
 - [x] Export: size each PDF page independently from its image aspect ratio, preserving mixed portrait and landscape documents within Android's A4/Letter edge limits.
 - [x] Export: use the saved PDF/JPEG preference and JPEG quality setting in scanner and QR/watermark exports.
-- [ ] Export: match Android's configurable output directory and filename behavior.
+- [x] Export: set a custom output filename for edited scans and avoid overwriting an existing export with the same name.
+- [ ] Export: match Android's configurable output directory.
 - [x] Export: include an invisible searchable Vision OCR text layer in scanner PDFs using the selected OCR language.
 - [x] OCR: list languages supported by the current iOS Vision implementation and allow automatic language detection.
 - [ ] OCR: compare Vision recognition coverage and language behavior with Android's downloadable Tesseract packs; iOS cannot download Tesseract packs through this port.

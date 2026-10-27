@@ -80,8 +80,8 @@ final class CameraCaptureModel: NSObject, ObservableObject, AVCapturePhotoCaptur
     private let detectionQueue = DispatchQueue(label: "org.freescan.ios.camera.detection", qos: .userInitiated)
     private var configured = false
     private var lastDetectionTime = CFAbsoluteTimeGetCurrent()
-    private var stableRectangle: DocumentQuad?
-    private var missedDetectionFrames = 0
+    private var previousRawRectangle: DocumentQuad?
+    private var stableRectangleCount = 0
     private var torchIsOn = false
     private var captureInProgress = false
     private var framesRemaining = 0
@@ -196,14 +196,13 @@ final class CameraCaptureModel: NSObject, ObservableObject, AVCapturePhotoCaptur
         do {
             try VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: .right).perform([request])
             guard let rectangle = request.results?.first else {
-                missedDetectionFrames += 1
-                if missedDetectionFrames >= 4 {
-                    stableRectangle = nil
-                    Task { @MainActor in self.detectedDocument = nil }
-                }
+                // Match the Android stabilizer: a missing observation breaks the
+                // consecutive-frame streak, so a stale quad cannot be reused.
+                previousRawRectangle = nil
+                stableRectangleCount = 0
+                Task { @MainActor in self.detectedDocument = nil }
                 return
             }
-            missedDetectionFrames = 0
             func topLeftOrigin(_ point: CGPoint) -> CGPoint {
                 CGPoint(x: point.x, y: 1 - point.y)
             }
@@ -213,18 +212,28 @@ final class CameraCaptureModel: NSObject, ObservableObject, AVCapturePhotoCaptur
                 bottomRight: topLeftOrigin(rectangle.bottomRight),
                 bottomLeft: topLeftOrigin(rectangle.bottomLeft)
             )
-            if let previous = stableRectangle,
-               hypot(previous.topLeft.x - detected.topLeft.x,
-                     previous.topLeft.y - detected.topLeft.y) < 0.10 {
-                stableRectangle = .blend(previous, detected, amount: 0.35)
+            if let previous = previousRawRectangle,
+               Self.maxCornerDistance(previous, detected) < 20 {
+                stableRectangleCount += 1
             } else {
-                stableRectangle = detected
+                stableRectangleCount = 1
             }
-            let stable = stableRectangle
+            previousRawRectangle = detected
+            // Android's QuadStabilizer waits for three consecutive detections
+            // within 20 px on its 640x480 preview before exposing a crop guide.
+            let stable = stableRectangleCount >= 3 ? detected : nil
             Task { @MainActor in self.detectedDocument = stable }
         } catch {
             // Keep the camera preview responsive if Vision temporarily rejects a frame.
         }
+    }
+
+    private static func maxCornerDistance(_ lhs: DocumentQuad, _ rhs: DocumentQuad) -> CGFloat {
+        let pairs = [(lhs.topLeft, rhs.topLeft), (lhs.topRight, rhs.topRight),
+                     (lhs.bottomRight, rhs.bottomRight), (lhs.bottomLeft, rhs.bottomLeft)]
+        return pairs.map { pair in
+            hypot((pair.0.x - pair.1.x) * 640, (pair.0.y - pair.1.y) * 480)
+        }.max() ?? .greatestFiniteMagnitude
     }
 
     func photoOutput(_ output: AVCapturePhotoOutput,

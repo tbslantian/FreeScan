@@ -280,7 +280,7 @@ struct ScanCameraView: View {
             return ImagePipeline.resize(cropped, maxDimension: maxDimension)
         }.value
         library.add(processed)
-        if mode == .certificate { isBackSide = true }
+        if mode == .certificate { isBackSide.toggle() }
     }
 }
 
@@ -404,6 +404,7 @@ struct ScanEditorView: View {
     @State private var recognizedText = ""
     @State private var shareFile: ShareFile?
     @State private var errorText: String?
+    @State private var exportFilename = ""
     @AppStorage("defaultFilter") private var defaultFilterRaw = ScanFilter.color.rawValue
     @AppStorage("removeShadowsEnabled") private var removeShadowsEnabled = true
     @AppStorage("exportFormat") private var exportFormat = "PDF"
@@ -474,6 +475,13 @@ struct ScanEditorView: View {
                             Spacer()
                             Button { Task { await runOCR(current) } } label: { Label("OCR", systemImage: "text.viewfinder") }
                         }.buttonStyle(.bordered).padding(.horizontal)
+                        HStack {
+                            TextField("导出文件名（不含扩展名）", text: $exportFilename)
+                                .textFieldStyle(.roundedBorder)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                                .padding(.horizontal)
+                        }
                         HStack {
                             Button("导出 \(exportFormat)") {
                                 if exportFormat == "JPEG" { exportJPEG() } else { exportPDF() }
@@ -552,6 +560,7 @@ struct ScanEditorView: View {
         let source = library.pages.map { ($0.image, $0.filter) }
         let shouldRemoveShadows = removeShadowsEnabled
         let language = UserDefaults.standard.string(forKey: "ocrLanguage") ?? "zh-Hans"
+        let filename = exportFilename.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : exportFilename
         Task {
             do {
                 let processed = await Task.detached(priority: .userInitiated) {
@@ -569,13 +578,15 @@ struct ScanEditorView: View {
                         recognizedPages.append([])
                     }
                 }
-                shareFile = ShareFile(url: try PDFServices.makePDF(from: processed, searchableText: recognizedPages))
+                shareFile = ShareFile(url: try PDFServices.makePDF(
+                    from: processed, searchableText: recognizedPages, filename: filename))
             } catch { errorText = error.localizedDescription }
         }
     }
     private func exportJPEG() {
         let source = library.pages.map { ($0.image, $0.filter) }
         let shouldRemoveShadows = removeShadowsEnabled
+        let filename = exportFilename.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : exportFilename
         Task {
             do {
                 let processed = await Task.detached(priority: .userInitiated) {
@@ -584,13 +595,14 @@ struct ScanEditorView: View {
                         return shouldRemoveShadows ? ImagePipeline.removeShadows(filtered) : filtered
                     }
                 }.value
-                shareFile = ShareFile(urls: try PDFServices.makeJPEGs(from: processed))
+                shareFile = ShareFile(urls: try PDFServices.makeJPEGs(from: processed, baseName: filename))
             } catch { errorText = error.localizedDescription }
         }
     }
     private func printPDF() {
         let source = library.pages.map { ($0.image, $0.filter) }
         let shouldRemoveShadows = removeShadowsEnabled
+        let filename = exportFilename.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : exportFilename
         Task {
             do {
                 let processed = await Task.detached(priority: .userInitiated) {
@@ -599,7 +611,7 @@ struct ScanEditorView: View {
                         return shouldRemoveShadows ? ImagePipeline.removeShadows(filtered) : filtered
                     }
                 }.value
-                PDFServices.printPDF(at: try PDFServices.makePDF(from: processed))
+                PDFServices.printPDF(at: try PDFServices.makePDF(from: processed, filename: filename))
             } catch { errorText = error.localizedDescription }
         }
     }
@@ -903,7 +915,21 @@ struct DocumentsView: View {
     private var savedPDFs: [URL] {
         let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
         return (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil))?
-            .filter { $0.pathExtension.lowercased() == "pdf" }.sorted { $0.lastPathComponent > $1.lastPathComponent } ?? []
+            .filter { $0.pathExtension.lowercased() == "pdf" }
+            .sorted { lhs, rhs in
+                let keys: Set<URLResourceKey> = [.contentModificationDateKey]
+                let lhsDate = (try? lhs.resourceValues(forKeys: keys).contentModificationDate) ?? .distantPast
+                let rhsDate = (try? rhs.resourceValues(forKeys: keys).contentModificationDate) ?? .distantPast
+                if lhsDate != rhsDate { return lhsDate > rhsDate }
+                return lhs.lastPathComponent.localizedStandardCompare(rhs.lastPathComponent) == .orderedAscending
+            } ?? []
+    }
+    private func metadataText(for url: URL) -> String {
+        let keys: Set<URLResourceKey> = [.fileSizeKey, .contentModificationDateKey]
+        let values = try? url.resourceValues(forKeys: keys)
+        let size = Int64(values?.fileSize ?? 0)
+        let date = values?.contentModificationDate?.formatted(date: .abbreviated, time: .shortened) ?? "日期未知"
+        return "\(ByteCountFormatter.string(fromByteCount: size, countStyle: .file)) · \(date)"
     }
     private var visiblePDFs: [URL] {
         guard !searchText.isEmpty else { return savedPDFs }
@@ -923,7 +949,10 @@ struct DocumentsView: View {
                     ForEach(visiblePDFs, id: \.absoluteString) { url in
                         HStack {
                             Image(systemName: "doc.richtext")
-                            Text(url.lastPathComponent).lineLimit(1)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(url.lastPathComponent).lineLimit(1)
+                                Text(metadataText(for: url)).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                            }
                             Spacer()
                             Button("打开") { open(url) }
                             Menu {
