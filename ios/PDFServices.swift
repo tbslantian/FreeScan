@@ -53,7 +53,7 @@ enum PDFServices {
     static func makeJPEGs(from images: [UIImage], quality: CGFloat? = nil) throws -> [URL] {
         let configuredQuality = UserDefaults.standard.object(forKey: "exportQuality") as? Double ?? 0.92
         let compressionQuality = min(1, max(0.1, quality ?? CGFloat(configuredQuality)))
-        try images.enumerated().map { index, image in
+        return try images.enumerated().map { index, image in
             let url = documentsDirectory
                 .appendingPathComponent("FreeScan-\(index + 1)-\(UUID().uuidString).jpg")
             guard let data = image.jpegData(compressionQuality: compressionQuality) else {
