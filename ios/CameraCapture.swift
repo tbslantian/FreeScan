@@ -174,7 +174,7 @@ final class CameraCaptureModel: NSObject, ObservableObject, AVCapturePhotoCaptur
     private func captureNextFrameOnQueue() {
         let settings = AVCapturePhotoSettings()
         settings.isHighResolutionPhotoEnabled = true
-        if output.supportedFlashModes.contains(NSNumber(value: flashMode.captureMode.rawValue)) {
+        if output.supportedFlashModes.contains(flashMode.captureMode) {
             settings.flashMode = flashMode.captureMode
         }
         output.capturePhoto(with: settings, delegate: self)
