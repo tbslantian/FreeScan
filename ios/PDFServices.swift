@@ -10,8 +10,25 @@ import Photos
 import UIKit
 
 enum PDFServices {
+    private static let exportFolderBookmarkKey = "exportFolderBookmark"
+
     private static var documentsDirectory: URL {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+    }
+
+    static func setExportDirectory(_ url: URL) throws {
+        let hasScopedAccess = url.startAccessingSecurityScopedResource()
+        defer { if hasScopedAccess { url.stopAccessingSecurityScopedResource() } }
+        let bookmark = try url.bookmarkData(options: .minimalBookmark,
+                                            includingResourceValuesForKeys: nil,
+                                            relativeTo: nil)
+        UserDefaults.standard.set(bookmark, forKey: exportFolderBookmarkKey)
+        UserDefaults.standard.set(url.lastPathComponent, forKey: "exportFolderDisplayName")
+    }
+
+    static func clearExportDirectory() {
+        UserDefaults.standard.removeObject(forKey: exportFolderBookmarkKey)
+        UserDefaults.standard.removeObject(forKey: "exportFolderDisplayName")
     }
 
     static func images(from url: URL, maxDimension: CGFloat = 2200) throws -> [UIImage] {
@@ -77,6 +94,7 @@ enum PDFServices {
             }
         }
         try data.write(to: output, options: .atomic)
+        try mirrorToConfiguredDirectory(output)
         return output
     }
 
@@ -118,11 +136,16 @@ enum PDFServices {
                               userInfo: [NSLocalizedDescriptionKey: "无法编码 JPEG 页面。"])
             }
             try data.write(to: url, options: .atomic)
+            try mirrorToConfiguredDirectory(url)
             return url
         }
     }
 
     private static func uniqueDocumentURL(baseName: String, extension fileExtension: String) -> URL {
+        uniqueURL(in: documentsDirectory, baseName: baseName, extension: fileExtension)
+    }
+
+    private static func uniqueURL(in directory: URL, baseName: String, extension fileExtension: String) -> URL {
         let invalid = CharacterSet(charactersIn: "/\\:*?\"<>|")
         var cleaned = baseName.components(separatedBy: invalid).joined(separator: "_")
             .trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: ".")))
@@ -131,14 +154,39 @@ enum PDFServices {
             break
         }
         let stem = cleaned.isEmpty ? "FreeScan-\(UUID().uuidString)" : cleaned
-        var candidate = documentsDirectory.appendingPathComponent(stem).appendingPathExtension(fileExtension)
+        var candidate = directory.appendingPathComponent(stem).appendingPathExtension(fileExtension)
         var suffix = 2
         while FileManager.default.fileExists(atPath: candidate.path) {
-            candidate = documentsDirectory.appendingPathComponent("\(stem) (\(suffix))")
+            candidate = directory.appendingPathComponent("\(stem) (\(suffix))")
                 .appendingPathExtension(fileExtension)
             suffix += 1
         }
         return candidate
+    }
+
+    /// Save a second copy to the user's Files folder. The app-local copy remains
+    /// the share-sheet/library URL so its security scope is not lost.
+    private static func mirrorToConfiguredDirectory(_ source: URL) throws {
+        guard let bookmark = UserDefaults.standard.data(forKey: exportFolderBookmarkKey) else { return }
+        var isStale = false
+        let directory = try URL(resolvingBookmarkData: bookmark, options: [], relativeTo: nil,
+                                bookmarkDataIsStale: &isStale)
+        let hasScopedAccess = directory.startAccessingSecurityScopedResource()
+        defer { if hasScopedAccess { directory.stopAccessingSecurityScopedResource() } }
+
+        let target = uniqueURL(in: directory, baseName: source.deletingPathExtension().lastPathComponent,
+                               extension: source.pathExtension)
+        let coordinator = NSFileCoordinator(filePresenter: nil)
+        var coordinationError: NSError?
+        var copyError: Error?
+        coordinator.coordinate(writingItemAt: target, options: .forReplacing, error: &coordinationError) { coordinatedURL in
+            do { try FileManager.default.copyItem(at: source, to: coordinatedURL) }
+            catch { copyError = error }
+        }
+        if let coordinationError { throw coordinationError }
+        if let copyError { throw copyError }
+
+        if isStale { try setExportDirectory(directory) }
     }
 
     static func printPDF(at url: URL) {

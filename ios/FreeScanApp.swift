@@ -1211,6 +1211,9 @@ struct SettingsView: View {
     @AppStorage("exportQuality") private var exportQuality = 0.92
     @AppStorage("scanResolution") private var scanResolution = CameraResolutionPreset.fourK.rawValue
     @AppStorage("exportFormat") private var exportFormat = "PDF"
+    @AppStorage("exportFolderDisplayName") private var exportFolderDisplayName = ""
+    @State private var showExportFolderPicker = false
+    @State private var exportFolderError: String?
     var body: some View {
         NavigationStack {
             Form {
@@ -1227,6 +1230,19 @@ struct SettingsView: View {
                     }
                 }
                 Section("导出") {
+                    Button {
+                        showExportFolderPicker = true
+                    } label: {
+                        LabeledContent("导出目录", value: exportFolderDisplayName.isEmpty ? "应用内文档" : exportFolderDisplayName)
+                    }
+                    if !exportFolderDisplayName.isEmpty {
+                        Button("恢复为应用内目录", role: .destructive) {
+                            PDFServices.clearExportDirectory()
+                            exportFolderDisplayName = ""
+                        }
+                    }
+                    Text("导出文件会额外保存到此文件夹；应用内副本用于文档库和分享。")
+                        .font(.caption).foregroundStyle(.secondary)
                     Picker("JPEG 质量", selection: $exportQuality) {
                         Text("高").tag(0.96); Text("平衡").tag(0.92); Text("小文件").tag(0.82)
                     }
@@ -1251,6 +1267,19 @@ struct SettingsView: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }.navigationTitle("设置")
+                .fileImporter(isPresented: $showExportFolderPicker, allowedContentTypes: [.folder]) { result in
+                    guard case .success(let url) = result else { return }
+                    do {
+                        try PDFServices.setExportDirectory(url)
+                        exportFolderDisplayName = url.lastPathComponent
+                    } catch { exportFolderError = error.localizedDescription }
+                }
+                .alert("无法设置导出目录", isPresented: Binding(
+                    get: { exportFolderError != nil },
+                    set: { if !$0 { exportFolderError = nil } }
+                )) {
+                    Button("好") { exportFolderError = nil }
+                } message: { Text(exportFolderError ?? "") }
         }
     }
 }

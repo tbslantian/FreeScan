@@ -31,7 +31,7 @@ Status is based on the current Android screens and services under `app/src/main/
 - [x] Export: size each PDF page independently from its image aspect ratio, preserving mixed portrait and landscape documents within Android's A4/Letter edge limits.
 - [x] Export: use the saved PDF/JPEG preference and JPEG quality setting in scanner and QR/watermark exports.
 - [x] Export: set a custom output filename for edited scans and avoid overwriting an existing export with the same name.
-- [ ] Export: match Android's configurable output directory.
+- [x] Export: choose a Files folder and persist access with a bookmark; mirror PDF/JPEG exports there while keeping app-local copies for library and sharing.
 - [x] Export: include an invisible searchable Vision OCR text layer in scanner PDFs using the selected OCR language.
 - [x] OCR: list languages supported by the current iOS Vision implementation and allow automatic language detection.
 - [ ] OCR: compare Vision recognition coverage and language behavior with Android's downloadable Tesseract packs; iOS cannot download Tesseract packs through this port.

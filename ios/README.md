@@ -12,7 +12,7 @@ This is the native SwiftUI companion project for the Android FreeScan app. It ha
 - QR detection, Quark blue-footer compatibility detection, and local region repair for images and imported PDFs, plus multi-region manual repair.
 - Local colored-ink heuristic cleanup and a brush eraser with undo/redo and before/after comparison for exam pages.
 - Camera document candidate outline, flash/torch controls, and 1080p/2K/4K scan output sizing.
-- Local settings for auto-crop, default filter, OCR language, and export quality; exported PDFs show file size/date and are ordered newest first.
+- Local settings for auto-crop, default filter, OCR language, export quality, and an optional Files export folder; exported files remain in the app library and are also copied to the selected folder.
 
 Image-based PDF editing rasterizes imported pages before editing. QR repair uses local border interpolation and works best on small marks over smooth backgrounds; it is not content-aware inpainting. Colored handwriting removal is a color heuristic and may affect colored print; manual repair is available for residual marks.
 
