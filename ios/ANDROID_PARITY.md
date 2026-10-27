@@ -36,7 +36,8 @@ Status is based on the current Android screens and services under `app/src/main/
 - [x] OCR: list languages supported by the current iOS Vision implementation and allow automatic language detection.
 - [ ] OCR: compare Vision recognition coverage and language behavior with Android's downloadable Tesseract packs; iOS cannot download Tesseract packs through this port.
 - [x] QR/watermark processing: verify decoded Vision QR payloads before automatic repair, scan a 1600 px overview plus overlapping 1280 px source tiles, enforce Android's 30% auto-repair size limit, retain the Quark blue-footer fallback, process every imported PDF page, and retain manual region repair.
-- [ ] QR/watermark processing: add Android-style review for undecoded QR candidates and parity-check detection coverage against Android's OpenCV/Aruco, CLAHE, inversion, and adaptive-threshold passes.
+- [x] QR/watermark processing: review decoded and undecoded QR candidates across all imported pages, toggle candidate regions, add manual rectangles, skip pages, and repair the selected regions.
+- [ ] QR/watermark processing: compare Vision detection coverage with Android's OpenCV/Aruco, CLAHE, inversion, and adaptive-threshold passes.
 - [x] Image filters: expose per-page automatic, original, color, grayscale, black-and-white, brightness, enhanced, enhanced grayscale, and soft-enhanced modes using native Core Image operators.
 - [ ] Image processing: compare output quality for each Android filter and geometry operation against iOS, including scan resolution and shadow correction.
 - [x] Paper eraser: manual brush strokes, brush sizing, undo/redo, clear, original/result comparison, repeat painting, and JPEG sharing.

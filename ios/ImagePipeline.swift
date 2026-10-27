@@ -16,6 +16,27 @@ struct RecognizedTextLine {
     let bounds: CGRect
 }
 
+enum QRDetectionKind: String {
+    case verified
+    case unverified
+    case quarkFooter
+    case manual
+}
+
+struct QRDetectionCandidate: Identifiable {
+    let id: UUID
+    var bounds: CGRect
+    let kind: QRDetectionKind
+    let automaticallyRepairable: Bool
+
+    init(id: UUID = UUID(), bounds: CGRect, kind: QRDetectionKind, automaticallyRepairable: Bool) {
+        self.id = id
+        self.bounds = bounds
+        self.kind = kind
+        self.automaticallyRepairable = automaticallyRepairable
+    }
+}
+
 struct LocalRepairStroke {
     /// Normalized image coordinates with a top-left origin.
     let points: [CGPoint]
@@ -435,13 +456,17 @@ enum ImagePipeline {
     }
 
     static func qrRectangles(in image: UIImage) -> [CGRect] {
+        qrCandidates(in: image).filter(\.automaticallyRepairable).map(\.bounds)
+    }
+
+    static func qrCandidates(in image: UIImage) -> [QRDetectionCandidate] {
         let image = upright(image)
         guard let cgImage = image.cgImage else { return [] }
         let sourceWidth = cgImage.width
         let sourceHeight = cgImage.height
         let tileSize = 1280
         let tileStep = 1024
-        var regions: [CGRect] = []
+        var regions: [QRDetectionCandidate] = []
 
         func overlapFraction(_ a: CGRect, _ b: CGRect) -> CGFloat {
             let intersection = a.intersection(b)
@@ -466,9 +491,8 @@ enum ImagePipeline {
                 return
             }
             for observation in request.results ?? [] {
-                // A decoded payload is the validation gate used by Android before auto-erasing.
-                guard observation.symbology == .qr, observation.confidence >= 0.2,
-                      let payload = observation.payloadString, !payload.isEmpty else { continue }
+                guard observation.symbology == .qr, observation.confidence >= 0.2 else { continue }
+                let verified = observation.payloadStringValue.map { !$0.isEmpty } ?? false
                 let box = observation.boundingBox
                 let detected = CGRect(
                     x: CGFloat(originX) + box.minX * CGFloat(regionWidth),
@@ -476,23 +500,33 @@ enum ImagePipeline {
                     width: box.width * CGFloat(regionWidth),
                     height: box.height * CGFloat(regionHeight)
                 )
-                guard detected.width >= 8, detected.height >= 8,
-                      max(detected.width, detected.height) <= CGFloat(min(sourceWidth, sourceHeight)) * 0.30 else {
-                    // Oversized detections are left for manual repair instead of auto-erased.
-                    continue
-                }
+                guard detected.width >= 8, detected.height >= 8 else { continue }
+                let safeSize = max(detected.width, detected.height) <=
+                    CGFloat(min(sourceWidth, sourceHeight)) * 0.30
                 let padded = detected.insetBy(dx: -max(4, detected.width * 0.12),
                                               dy: -max(4, detected.height * 0.12))
                     .intersection(CGRect(x: 0, y: 0, width: sourceWidth, height: sourceHeight))
                 guard !padded.isNull, padded.width > 0, padded.height > 0 else { continue }
-                let normalized = CGRect(x: padded.minX / CGFloat(sourceWidth),
-                                         y: padded.minY / CGFloat(sourceHeight),
-                                         width: padded.width / CGFloat(sourceWidth),
-                                         height: padded.height / CGFloat(sourceHeight))
-                if !regions.contains(where: {
-                    overlapFraction($0, normalized) > 0.65 && overlapFraction(normalized, $0) > 0.65
+                let normalized = CGRect(
+                    x: padded.minX / CGFloat(sourceWidth),
+                    y: padded.minY / CGFloat(sourceHeight),
+                    width: padded.width / CGFloat(sourceWidth),
+                    height: padded.height / CGFloat(sourceHeight)
+                )
+                let candidate = QRDetectionCandidate(
+                    bounds: normalized,
+                    kind: verified ? .verified : .unverified,
+                    automaticallyRepairable: verified && safeSize
+                )
+                if let existing = regions.firstIndex(where: {
+                    overlapFraction($0.bounds, normalized) > 0.65 &&
+                        overlapFraction(normalized, $0.bounds) > 0.65
                 }) {
-                    regions.append(normalized)
+                    if candidate.automaticallyRepairable && !regions[existing].automaticallyRepairable {
+                        regions[existing] = candidate
+                    }
+                } else {
+                    regions.append(candidate)
                 }
             }
         }
@@ -551,8 +585,10 @@ enum ImagePipeline {
         }
         if hasQuarkFooter {
             let footer = CGRect(x: 0.64, y: 0.90, width: 0.36, height: 0.10)
-            regions.removeAll { overlapFraction($0, footer) > 0.7 }
-            regions.append(footer)
+            regions.removeAll { overlapFraction($0.bounds, footer) > 0.7 }
+            regions.append(QRDetectionCandidate(
+                bounds: footer, kind: .quarkFooter, automaticallyRepairable: true
+            ))
         }
         return regions
     }

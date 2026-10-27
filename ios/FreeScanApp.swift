@@ -1046,6 +1046,7 @@ struct WatermarkToolView: View {
     @State private var shareFile: ShareFile?
     @State private var showImporter = false
     @State private var showManualRepair = false
+    @State private var showReview = false
     @State private var errorText: String?
     @AppStorage("exportFormat") private var exportFormat = "PDF"
     private var image: UIImage? { images.indices.contains(selectedIndex) ? images[selectedIndex] : nil }
@@ -1075,6 +1076,8 @@ struct WatermarkToolView: View {
             if image != nil {
                 Button("自动识别并修复 QR（全部页面）", action: repairQRs)
                     .buttonStyle(.borderedProminent)
+                Button("复核并选择区域（全部页面）") { showReview = true }
+                    .buttonStyle(.bordered)
                 Button("手动框选修复") { showManualRepair = true }.buttonStyle(.bordered)
                 HStack {
                     Button("导出 \(exportFormat)") {
@@ -1105,6 +1108,12 @@ struct WatermarkToolView: View {
                     images[selectedIndex] = repaired
                     message = "已修复当前页选区。"
                 }
+            }
+        }
+        .sheet(isPresented: $showReview) {
+            WatermarkReviewView(images: $images) { repairedCount in
+                selectedIndex = 0
+                message = "复核完成：修复了 \(repairedCount) 个区域。"
             }
         }
         .sheet(item: $shareFile) { ShareSheet(urls: $0.urls) }
@@ -1150,6 +1159,190 @@ struct WatermarkToolView: View {
         do { shareFile = ShareFile(urls: try PDFServices.makeJPEGs(from: images)) }
         catch { errorText = error.localizedDescription }
     }
+}
+
+private struct WatermarkReviewView: View {
+    @Environment(\.dismiss) private var dismiss
+    @Binding var images: [UIImage]
+    let onComplete: (Int) -> Void
+
+    @State private var candidates: [[QRDetectionCandidate]] = []
+    @State private var selected = Set<UUID>()
+    @State private var selectedIndex = 0
+    @State private var isAddingManualRegion = false
+    @State private var dragStart: CGPoint?
+    @State private var dragEnd: CGPoint?
+    @State private var isDetecting = true
+    @State private var isRepairing = false
+
+    private var page: UIImage? { images.indices.contains(selectedIndex) ? images[selectedIndex] : nil }
+    private var currentCandidates: [QRDetectionCandidate] {
+        candidates.indices.contains(selectedIndex) ? candidates[selectedIndex] : []
+    }
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 12) {
+                if let page {
+                    Text("第 \(selectedIndex + 1) / \(images.count) 页 · 已选 \(selected.count) 个区域")
+                        .font(.subheadline)
+                    GeometryReader { geometry in
+                        let fitted = fittedRect(imageSize: page.size, container: geometry.size)
+                        ZStack(alignment: .topLeading) {
+                            Color(uiColor: .secondarySystemBackground)
+                            Image(uiImage: page)
+                                .resizable().scaledToFit()
+                                .frame(width: geometry.size.width, height: geometry.size.height)
+                            ForEach(currentCandidates) { candidate in
+                                let rect = screenRect(candidate.bounds, in: fitted)
+                                RoundedRectangle(cornerRadius: 3)
+                                    .stroke(selected.contains(candidate.id) ? Color.green : Color.orange,
+                                            style: StrokeStyle(lineWidth: 2, dash: selected.contains(candidate.id) ? [] : [6, 4]))
+                                    .frame(width: max(2, rect.width), height: max(2, rect.height))
+                                    .position(x: rect.midX, y: rect.midY)
+                            }
+                            if let start = dragStart, let end = dragEnd {
+                                let rect = CGRect(x: min(start.x, end.x), y: min(start.y, end.y),
+                                                  width: abs(end.x - start.x), height: abs(end.y - start.y))
+                                RoundedRectangle(cornerRadius: 3)
+                                    .stroke(Color.blue, style: StrokeStyle(lineWidth: 2, dash: [5, 3]))
+                                    .frame(width: max(2, rect.width), height: max(2, rect.height))
+                                    .position(x: rect.midX, y: rect.midY)
+                            }
+                        }
+                        .contentShape(Rectangle())
+                        .gesture(DragGesture(minimumDistance: isAddingManualRegion ? 6 : 0)
+                            .onChanged { value in
+                                guard isAddingManualRegion else { return }
+                                let point = normalizedPoint(value.location, in: fitted)
+                                if dragStart == nil { dragStart = point }
+                                dragEnd = point
+                            }
+                            .onEnded { value in
+                                defer { dragStart = nil; dragEnd = nil }
+                                if isAddingManualRegion {
+                                    let start = dragStart ?? normalizedPoint(value.startLocation, in: fitted)
+                                    let end = normalizedPoint(value.location, in: fitted)
+                                    let rect = CGRect(x: min(start.x, end.x), y: min(start.y, end.y),
+                                                      width: abs(end.x - start.x), height: abs(end.y - start.y))
+                                    guard rect.width * page.size.width >= 8,
+                                          rect.height * page.size.height >= 8 else { return }
+                                    let candidate = QRDetectionCandidate(bounds: rect, kind: .manual,
+                                                                         automaticallyRepairable: false)
+                                    candidates[selectedIndex].append(candidate)
+                                    selected.insert(candidate.id)
+                                    isAddingManualRegion = false
+                                } else {
+                                    let point = normalizedPoint(value.location, in: fitted)
+                                    if let candidate = currentCandidates.reversed().first(where: { $0.bounds.contains(point) }) {
+                                        if selected.contains(candidate.id) { selected.remove(candidate.id) }
+                                        else { selected.insert(candidate.id) }
+                                    }
+                                }
+                            })
+                    }
+                    .overlay(alignment: .bottom) {
+                        Text(isAddingManualRegion ? "拖动框出手动修复区域" : "绿色区域将修复；橙色候选点按后纳入修复")
+                            .font(.caption).padding(8)
+                            .background(.regularMaterial, in: Capsule()).padding(8)
+                    }
+
+                    if isDetecting {
+                        ProgressView("正在逐页识别二维码…")
+                    } else if currentCandidates.isEmpty {
+                        Text("本页没有自动候选；可添加手动选区或跳过。")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+
+                    HStack {
+                        Button("全选本页") { selected.formUnion(currentCandidates.map(\.id)) }
+                        Button("清空本页") { selected.subtract(currentCandidates.map(\.id)) }
+                        Button(isAddingManualRegion ? "取消手动框选" : "添加手动选区") {
+                            isAddingManualRegion.toggle()
+                        }
+                    }.buttonStyle(.bordered).disabled(isDetecting || isRepairing)
+
+                    HStack {
+                        Button("上一页") { selectedIndex = max(0, selectedIndex - 1) }
+                            .disabled(selectedIndex == 0 || isRepairing)
+                        Spacer()
+                        Button(selectedIndex == images.count - 1 ? "修复所选区域" : "下一页") {
+                            if selectedIndex < images.count - 1 {
+                                selectedIndex += 1
+                                isAddingManualRegion = false
+                            } else {
+                                applySelection()
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(isDetecting || isRepairing)
+                    }
+                } else {
+                    ContentUnavailableView("没有可复核页面", systemImage: "qrcode")
+                }
+            }
+            .padding()
+            .navigationTitle("复核二维码/水印")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .topBarLeading) { Button("取消") { dismiss() } } }
+            .task { await detectCandidates() }
+        }
+    }
+
+    private func detectCandidates() async {
+        let snapshot = images
+        let found = await Task.detached(priority: .userInitiated) {
+            snapshot.map { ImagePipeline.qrCandidates(in: $0) }
+        }.value
+        candidates = found
+        selected = Set(found.flatMap { $0 }.filter(\.automaticallyRepairable).map(\.id))
+        isDetecting = false
+    }
+
+    private func applySelection() {
+        let snapshot = images
+        let regions = snapshot.indices.map { index in
+            candidates.indices.contains(index)
+                ? candidates[index].filter { selected.contains($0.id) }.map(\.bounds)
+                : []
+        }
+        let count = regions.reduce(0) { $0 + $1.count }
+        isRepairing = true
+        Task {
+            let repaired = await Task.detached(priority: .userInitiated) {
+                snapshot.enumerated().map { index, image in
+                    regions[index].isEmpty ? image : ImagePipeline.repair(image, regions: regions[index])
+                }
+            }.value
+            images = repaired
+            onComplete(count)
+            dismiss()
+        }
+    }
+
+    private func fittedRect(imageSize: CGSize, container: CGSize) -> CGRect {
+        guard imageSize.width > 0, imageSize.height > 0 else { return .zero }
+        let scale = min(container.width / imageSize.width, container.height / imageSize.height)
+        let size = CGSize(width: imageSize.width * scale, height: imageSize.height * scale)
+        return CGRect(x: (container.width - size.width) / 2, y: (container.height - size.height) / 2,
+                      width: size.width, height: size.height)
+    }
+
+    private func screenRect(_ rect: CGRect, in imageRect: CGRect) -> CGRect {
+        CGRect(x: imageRect.minX + rect.minX * imageRect.width,
+               y: imageRect.minY + rect.minY * imageRect.height,
+               width: rect.width * imageRect.width,
+               height: rect.height * imageRect.height)
+    }
+
+    private func normalizedPoint(_ point: CGPoint, in imageRect: CGRect) -> CGPoint {
+        CGPoint(x: ((point.x - imageRect.minX) / max(1, imageRect.width)).clamped(to: 0...1),
+                y: ((point.y - imageRect.minY) / max(1, imageRect.height)).clamped(to: 0...1))
+    }
+}
+
+private extension CGFloat {
+    func clamped(to range: ClosedRange<CGFloat>) -> CGFloat { min(max(self, range.lowerBound), range.upperBound) }
 }
 
 struct HandwritingToolView: View {
