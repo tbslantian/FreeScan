@@ -25,7 +25,8 @@ Status is based on the current Android screens and services under `app/src/main/
 - [x] Drafts: persist unfinished scan pages across app restarts.
 - [x] Library: search, open into the editor, rename, print, share, and delete saved PDFs.
 - [x] Library: show file size and modified date for app-local PDFs and sort newest first.
-- [ ] Library: discover imported PDF references and PDFs in user-selected external folders as Android does.
+- [x] Library: import one or multiple PDFs from Files into the app-local library so they remain available for open, rename, share, print, and delete.
+- [ ] Library: continuously discover PDFs in user-selected external folders without copying them, as Android does.
 - [x] Export: share every page in multi-page JPEG exports instead of silently sharing only the first page.
 - [x] Export: size each PDF page independently from its image aspect ratio, preserving mixed portrait and landscape documents within Android's A4/Letter edge limits.
 - [x] Export: use the saved PDF/JPEG preference and JPEG quality setting in scanner and QR/watermark exports.

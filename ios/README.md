@@ -7,7 +7,7 @@ This is the native SwiftUI companion project for the Android FreeScan app. It ha
 - Camera capture and photo import, Vision document-edge detection, perspective correction, and optional auto-crop.
 - Nine certificate/document framing templates with live camera guides.
 - Multi-page editing: page selection, rotation, manual crop, color/grayscale/black-and-white/enhance filters.
-- PDF import as editable image pages, PDF/JPEG export with custom names, Files sharing, and AirPrint.
+- Single or multiple PDF import from Files into a persistent app-local library, editable image pages, PDF/JPEG export with custom names, Files sharing, and AirPrint.
 - On-device Vision OCR for Simplified Chinese, Traditional Chinese, and English.
 - QR detection, Quark blue-footer compatibility detection, and local region repair for images and imported PDFs, plus multi-region manual repair.
 - Local colored-ink heuristic cleanup and a brush eraser with undo/redo and before/after comparison for exam pages.

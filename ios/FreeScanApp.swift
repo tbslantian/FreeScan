@@ -98,9 +98,10 @@ struct HomeView: View {
         }
     }
     private func importPDF(_ url: URL) {
-        let access = url.startAccessingSecurityScopedResource()
-        defer { if access { url.stopAccessingSecurityScopedResource() } }
-        do { library.add(contentsOf: try PDFServices.images(from: url)) }
+        do {
+            let localURL = try PDFServices.importIntoLibrary(from: url)
+            library.add(contentsOf: try PDFServices.images(from: localURL))
+        }
         catch { NSLog("FreeScan PDF import: %@", error.localizedDescription) }
     }
 }
@@ -912,7 +913,9 @@ struct DocumentsView: View {
     @State private var pdfPendingRename: URL?
     @State private var renameText = ""
     @State private var showRenameDialog = false
+    @State private var libraryRevision = 0
     private var savedPDFs: [URL] {
+        _ = libraryRevision
         let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
         return (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil))?
             .filter { $0.pathExtension.lowercased() == "pdf" }
@@ -971,14 +974,18 @@ struct DocumentsView: View {
                         }
                     }
                 }
-                Section { Button { showImporter = true } label: { Label("导入 PDF 进行编辑", systemImage: "folder.badge.plus") } }
+                Section { Button { showImporter = true } label: { Label("导入 PDF 到文档库", systemImage: "folder.badge.plus") } }
             }
             .navigationTitle("文档")
             .searchable(text: $searchText, prompt: "搜索 PDF")
             .navigationDestination(isPresented: $showEditor) { ScanEditorView() }
-            .fileImporter(isPresented: $showImporter, allowedContentTypes: [.pdf]) { result in
-                guard case .success(let url) = result else { return }
-                open(url)
+            .fileImporter(isPresented: $showImporter, allowedContentTypes: [.pdf], allowsMultipleSelection: true) { result in
+                guard case .success(let urls) = result else { return }
+                do {
+                    let imported = try urls.map { try PDFServices.importIntoLibrary(from: $0) }
+                    libraryRevision += 1
+                    if let first = imported.first { open(first) }
+                } catch { errorText = error.localizedDescription }
             }
             .alert("无法打开文件", isPresented: Binding(get: { errorText != nil }, set: { if !$0 { errorText = nil } })) {
                 Button("好") { errorText = nil }
@@ -996,8 +1003,6 @@ struct DocumentsView: View {
         }
     }
     private func open(_ url: URL) {
-        let access = url.startAccessingSecurityScopedResource()
-        defer { if access { url.stopAccessingSecurityScopedResource() } }
         do {
             let pages = try PDFServices.images(from: url)
             guard !pages.isEmpty else { throw NSError(domain: "FreeScan.PDF", code: 3,

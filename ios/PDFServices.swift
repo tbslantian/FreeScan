@@ -28,6 +28,20 @@ enum PDFServices {
         }
     }
 
+    /// Copy a PDF selected from Files into FreeScan's local library so it remains
+    /// available after the document picker closes and across future launches.
+    static func importIntoLibrary(from source: URL) throws -> URL {
+        let hasScopedAccess = source.startAccessingSecurityScopedResource()
+        defer { if hasScopedAccess { source.stopAccessingSecurityScopedResource() } }
+
+        let destination = uniqueDocumentURL(
+            baseName: source.deletingPathExtension().lastPathComponent,
+            extension: "pdf"
+        )
+        try FileManager.default.copyItem(at: source, to: destination)
+        return destination
+    }
+
     static func makePDF(from images: [UIImage], title: String = "FreeScan",
                         searchableText: [[RecognizedTextLine]]? = nil,
                         filename: String? = nil) throws -> URL {
