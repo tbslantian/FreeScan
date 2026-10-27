@@ -537,7 +537,8 @@ enum ImagePipeline {
         return try await withCheckedThrowingContinuation { continuation in
             let request = VNRecognizeTextRequest { request, error in
                 if let error { continuation.resume(throwing: error); return }
-                let lines = (request.results as? [VNRecognizedTextObservation] ?? []).compactMap { observation in
+                let lines: [RecognizedTextLine] =
+                    (request.results as? [VNRecognizedTextObservation] ?? []).compactMap { observation -> RecognizedTextLine? in
                     guard let text = observation.topCandidates(1).first?.string else { return nil }
                     return RecognizedTextLine(text: text, bounds: observation.boundingBox)
                 }
