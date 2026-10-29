@@ -41,7 +41,7 @@ Status is based on the current Android screens and services under `app/src/main/
 - [x] Image filters: expose per-page automatic, original, color, grayscale, black-and-white, brightness, enhanced, enhanced grayscale, and soft-enhanced modes using native Core Image operators.
 - [ ] Image processing: compare output quality for each Android filter and geometry operation against iOS, including scan resolution and shadow correction.
 - [x] Paper eraser: manual brush strokes, brush sizing, undo/redo, clear, original/result comparison, repeat painting, and JPEG sharing.
-- [ ] Paper eraser: the iOS path now matches Android's HSV bounds, 3x3 close, and 5–9 px elliptical mask dilation, then repairs from the best smooth horizontal, vertical, or diagonal samples; it still does not implement OpenCV Telea inpainting.
+- [x] Paper eraser: use OpenCV 4.12.0 on both platforms, matching HSV bounds, 10% color-area guard, 32 px ROI padding, 3x3 elliptical close, 5–9 px dilation, and Telea radius. Brush repair uses matching stroke rasterization, crop padding, 3x3 dilation and Telea radius rules. Device output comparison is still required.
 - [ ] iPhone/iPad device validation: verify camera, photo/file permissions, page layouts, printing, and memory behavior on physical devices.
 
 ## IPA delivery

@@ -1409,6 +1409,7 @@ struct HandwritingToolView: View {
     @State private var shareFile: ShareFile?
     @State private var showManualRepair = false
     @State private var showingOriginal = false
+    @State private var isErasing = false
     var body: some View {
         VStack(spacing: 14) {
             Text("试卷擦除").font(.title2.bold())
@@ -1422,17 +1423,29 @@ struct HandwritingToolView: View {
             }
             else { ContentUnavailableView("选择试卷图片", systemImage: "pencil.tip.crop.circle") }
             PhotosPicker("选择图片", selection: $item, matching: .images).buttonStyle(.bordered)
+                .disabled(isErasing)
+            if isErasing { ProgressView("正在修复彩色笔迹…") }
             if let original {
-                Button("自动擦除彩色笔迹") { image = ImagePipeline.removeColoredInk(original); showingOriginal = false }
-                    .buttonStyle(.borderedProminent)
-                Button("手动涂抹修复") { showManualRepair = true }.buttonStyle(.bordered)
-                Button("恢复原图") { image = original; showingOriginal = false }
+                Button("自动擦除彩色笔迹") {
+                    isErasing = true
+                    Task {
+                        let repaired = await Task.detached(priority: .userInitiated) {
+                            ImagePipeline.removeColoredInk(original)
+                        }.value
+                        image = repaired
+                        showingOriginal = false
+                        isErasing = false
+                    }
+                }
+                    .buttonStyle(.borderedProminent).disabled(isErasing)
+                Button("手动涂抹修复") { showManualRepair = true }.buttonStyle(.bordered).disabled(isErasing)
+                Button("恢复原图") { image = original; showingOriginal = false }.disabled(isErasing)
                 Button("导出修复结果") {
                     if let image, let url = try? PDFServices.makeJPEGs(from: [image]).first {
                         shareFile = ShareFile(url: url)
                     }
                 }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.bordered).disabled(isErasing)
             }
             Spacer()
         }.padding().navigationTitle("试卷擦除")

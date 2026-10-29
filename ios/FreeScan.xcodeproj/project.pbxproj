@@ -15,6 +15,7 @@
         A10000000000000000000009 /* FreeScanOpenCV.mm in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000009; };
         A10000000000000000000010 /* OpenCV in Frameworks */ = {isa = PBXBuildFile; productRef = AA0000000000000000000001; };
         A10000000000000000000012 = {isa = PBXBuildFile; fileRef = B10000000000000000000012; };
+        A10000000000000000000013 = {isa = PBXBuildFile; fileRef = B10000000000000000000013; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -30,6 +31,7 @@
         B10000000000000000000010 = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = FreeScanOpenCV.h; sourceTree = "<group>"; };
         B10000000000000000000011 = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "FreeScan-Bridging-Header.h"; sourceTree = "<group>"; };
         B10000000000000000000012 = {isa = PBXFileReference; lastKnownFileType = text; path = "OpenCV-LICENSE.txt"; sourceTree = "<group>"; };
+        B10000000000000000000013 = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -40,7 +42,7 @@
 		D10000000000000000000001 = {
 			isa = PBXGroup;
 			children = (
-                B10000000000000000000009, B10000000000000000000010, B10000000000000000000011, B10000000000000000000012,
+                B10000000000000000000009, B10000000000000000000010, B10000000000000000000011, B10000000000000000000012, B10000000000000000000013,
 				B10000000000000000000001 /* FreeScanApp.swift */,
 				B10000000000000000000002 /* Models.swift */,
 				B10000000000000000000003 /* ImagePipeline.swift */,
@@ -121,7 +123,7 @@
 		C10000000000000000000003 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
-			files = (A10000000000000000000006 /* Assets.xcassets in Resources */, A10000000000000000000012,);
+			files = (A10000000000000000000006 /* Assets.xcassets in Resources */, A10000000000000000000012, A10000000000000000000013,);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
