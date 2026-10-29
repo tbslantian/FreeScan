@@ -16,6 +16,11 @@
         A10000000000000000000010 /* OpenCV in Frameworks */ = {isa = PBXBuildFile; productRef = AA0000000000000000000001; };
         A10000000000000000000012 = {isa = PBXBuildFile; fileRef = B10000000000000000000012; };
         A10000000000000000000013 = {isa = PBXBuildFile; fileRef = B10000000000000000000013; };
+        A10000000000000000000020 = {isa = PBXBuildFile; fileRef = B10000000000000000000020; };
+        A10000000000000000000023 = {isa = PBXBuildFile; fileRef = B10000000000000000000023; };
+        A10000000000000000000024 = {isa = PBXBuildFile; fileRef = B10000000000000000000024; };
+        A10000000000000000000025 = {isa = PBXBuildFile; fileRef = B10000000000000000000025; };
+        A10000000000000000000026 = {isa = PBXBuildFile; fileRef = B10000000000000000000026; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -32,6 +37,13 @@
         B10000000000000000000011 = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "FreeScan-Bridging-Header.h"; sourceTree = "<group>"; };
         B10000000000000000000012 = {isa = PBXFileReference; lastKnownFileType = text; path = "OpenCV-LICENSE.txt"; sourceTree = "<group>"; };
         B10000000000000000000013 = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+        B10000000000000000000020 = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = FreeScanTesseract.mm; sourceTree = "<group>"; };
+        B10000000000000000000021 = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = FreeScanTesseract.h; sourceTree = "<group>"; };
+        B10000000000000000000022 = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = TesseractCore.hpp; sourceTree = "<group>"; };
+        B10000000000000000000023 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalOCR.swift; sourceTree = "<group>"; };
+        B10000000000000000000024 = {isa = PBXFileReference; lastKnownFileType = text.json; path = OCRLanguages.json; sourceTree = "<group>"; };
+        B10000000000000000000025 = {isa = PBXFileReference; lastKnownFileType = text; path = "Tesseract-LICENSE.txt"; sourceTree = "<group>"; };
+        B10000000000000000000026 = {isa = PBXFileReference; lastKnownFileType = text; path = "Leptonica-LICENSE.txt"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -42,6 +54,13 @@
 		D10000000000000000000001 = {
 			isa = PBXGroup;
 			children = (
+                B10000000000000000000026,
+                B10000000000000000000025,
+                B10000000000000000000024,
+                B10000000000000000000023,
+                B10000000000000000000022,
+                B10000000000000000000021,
+                B10000000000000000000020,
                 B10000000000000000000009, B10000000000000000000010, B10000000000000000000011, B10000000000000000000012, B10000000000000000000013,
 				B10000000000000000000001 /* FreeScanApp.swift */,
 				B10000000000000000000002 /* Models.swift */,
@@ -114,6 +133,8 @@
 				A10000000000000000000004 /* PDFServices.swift in Sources */,
 				A10000000000000000000005 /* CameraCapture.swift in Sources */,
                 A10000000000000000000009 /* FreeScanOpenCV.mm in Sources */,
+                A10000000000000000000023,
+                A10000000000000000000020,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -123,7 +144,7 @@
 		C10000000000000000000003 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
-			files = (A10000000000000000000006 /* Assets.xcassets in Resources */, A10000000000000000000012, A10000000000000000000013,);
+			files = (A10000000000000000000006 /* Assets.xcassets in Resources */, A10000000000000000000012, A10000000000000000000013, A10000000000000000000024, A10000000000000000000026, A10000000000000000000025,);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */

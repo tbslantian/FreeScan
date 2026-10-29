@@ -1534,6 +1534,7 @@ struct SettingsView: View {
     @AppStorage("removeShadowsEnabled") private var removeShadowsEnabled = true
     @AppStorage("defaultFilter") private var defaultFilter = ScanFilter.automatic.rawValue
     @AppStorage("ocrLanguage") private var ocrLanguage = "zh-Hans"
+    @AppStorage("ocrEngine") private var ocrEngine = "vision"
     @AppStorage("exportQuality") private var exportQuality = 0.92
     @AppStorage("scanResolution") private var scanResolution = CameraResolutionPreset.fourK.rawValue
     @AppStorage("exportFormat") private var exportFormat = "PDF"
@@ -1578,6 +1579,12 @@ struct SettingsView: View {
                     }
                 }
                 Section("文字识别") {
+                    Picker("OCR 引擎", selection: $ocrEngine) {
+                        Text("Apple Vision").tag("vision")
+                        Text("Tesseract（本地语言包）").tag("tesseract")
+                    }
+                    NavigationLink("管理 Tesseract 语言包") { OCRLanguagesView() }
+                    if ocrEngine == "vision" {
                     Picker("识别语言", selection: $ocrLanguage) {
                         Text("自动识别").tag("auto")
                         ForEach(ImagePipeline.supportedOCRLanguages(), id: \.self) { language in
@@ -1585,7 +1592,9 @@ struct SettingsView: View {
                                 .tag(language)
                         }
                     }
-                    Text("Vision OCR 在设备上运行，不会上传图像。").font(.caption).foregroundStyle(.secondary)
+                    }
+                    Text(ocrEngine == "vision" ? "Vision OCR 在设备上运行。" : "请下载并启用语言包；多种已启用语言会联合识别。识别在设备本地运行。")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
                 Section("关于") {
                     LabeledContent("FreeScan iOS", value: "1.0")

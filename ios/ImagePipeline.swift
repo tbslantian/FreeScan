@@ -339,11 +339,17 @@ enum ImagePipeline {
     }
 
     static func recognizeText(_ image: UIImage, language: String = "zh-Hans") async throws -> String {
+        if UserDefaults.standard.string(forKey: "ocrEngine") == "tesseract" {
+            return try await recognizeWithTesseract(image).text
+        }
         let lines = try await recognizeTextLines(image, language: language)
         return lines.map(\.text).joined(separator: "\n")
     }
 
     static func recognizeTextLines(_ image: UIImage, language: String = "zh-Hans") async throws -> [RecognizedTextLine] {
+        if UserDefaults.standard.string(forKey: "ocrEngine") == "tesseract" {
+            return try await recognizeWithTesseract(image).words
+        }
         let image = upright(image)
         guard let cgImage = image.cgImage else { return [] }
         return try await withCheckedThrowingContinuation { continuation in
@@ -371,6 +377,11 @@ enum ImagePipeline {
                 catch { continuation.resume(throwing: error) }
             }
         }
+    }
+
+    private static func recognizeWithTesseract(_ image: UIImage) async throws -> LocalOCRResult {
+        let config = try await OCRLanguageStore.shared.configuration()
+        return try await TesseractOCRRunner.shared.recognize(upright(image), path: config.path, languages: config.languages)
     }
 
     private static func scaled(_ point: CGPoint, size: CGSize) -> CGPoint {

@@ -10,7 +10,7 @@ This is the native SwiftUI companion project for the Android FreeScan app. It ta
 - Multi-page editing: page selection, rotation, manual crop, color/grayscale/black-and-white/enhance filters.
 - Color, grayscale and bitonal modes use the OpenCV illumination/Lab white-balance/Retinex/Sauvola pipeline ported from Android. Preview, export and print share the processing order, and original mode bypasses enhancement. Brightness/enhanced/enhanced-gray/soft modes remain Core Image approximations of Android-only `DocFilters` binaries.
 - Single or multiple PDF import from Files into a persistent app-local library, editable image pages, PDF/JPEG export with custom names, Files sharing, and AirPrint.
-- On-device Vision OCR for Simplified Chinese, Traditional Chinese, and English.
+- Selectable on-device Vision or Tesseract OCR. Tesseract supports the same catalog of 120 downloadable `tessdata_fast` language packs as Android, including multi-language activation, cancellation and removal. Downloads are verified against a fixed official repository revision; recognition and word boxes run locally.
 - QR detection, Quark blue-footer compatibility detection, and local region repair for images and imported PDFs, plus multi-region manual repair.
 - Local colored-ink heuristic cleanup and a brush eraser with undo/redo and before/after comparison for exam pages.
 - Camera document candidate outline, flash/torch controls, and 1080p/2K/4K scan output sizing.
@@ -38,7 +38,7 @@ Configure these GitHub Actions repository secrets before running the `iOS IPA` w
 
 The IPA artifact is signed for App Store Connect and can be uploaded using Transporter or App Store Connect. Exporting an App Store Connect IPA does not itself submit the app or publish it to TestFlight. Apple distribution signing requires an Apple Distribution certificate and matching provisioning profile. Do not commit those files or passwords to the repository.
 
-The source was prepared on Windows and cannot be compiled with Xcode in this environment. The macOS GitHub Actions runner performs the archive and IPA export.
+The source was prepared on Windows and cannot be compiled with Xcode in this environment. The macOS GitHub Actions runner first builds pinned Tesseract 5.5.1 and Leptonica 1.85 sources for iOS arm64 and host regression checks, then performs the device build, archive and IPA export. Local macOS builds must run `bash ios/build-ocr.sh` before opening/building the Xcode project. Source downloads are checked against fixed SHA-256 digests and the installed libraries are cached. Language weights are downloaded on demand and are not included in the app binary.
 
 The iOS implementation is not yet at complete Android feature parity. See [ANDROID_PARITY.md](ANDROID_PARITY.md) for the audited remaining work; the presence of an IPA build does not imply that this feature migration is complete.
 

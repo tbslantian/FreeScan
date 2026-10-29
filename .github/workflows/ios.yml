@@ -32,7 +32,8 @@ jobs:
           xcodebuild -showsdks
 
       - name: Cache native OCR libraries
-        uses: actions/cache@v5
+        id: ocr-cache
+        uses: actions/cache/restore@v5
         with:
           path: |
             ios/.build/ocr-device
@@ -40,7 +41,17 @@ jobs:
           key: ${{ runner.os }}-${{ runner.arch }}-ocr-${{ hashFiles('ios/build-ocr.sh') }}
 
       - name: Build pinned Tesseract and Leptonica from source
+        id: ocr-build
         run: bash ios/build-ocr.sh
+
+      - name: Save native OCR libraries
+        if: steps.ocr-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            ios/.build/ocr-device
+            ios/.build/ocr-host
+          key: ${{ steps.ocr-cache.outputs.cache-primary-key }}
 
       - name: Compile for a generic iPhone/iPad device
         # Source-built static OCR libraries contain only the device/host targets,
@@ -71,6 +82,32 @@ jobs:
               -o "$RUNNER_TEMP/$native_test"
             "$RUNNER_TEMP/$native_test"
           done
+
+      - name: Check Tesseract recognition and word coordinates
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, json, pathlib, urllib.request
+          catalog = json.loads(pathlib.Path("ios/OCRLanguages.json").read_text())
+          model = next(m for m in catalog["models"] if m["code"] == "eng")
+          url = f'https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/{catalog["revision"]}/eng.traineddata'
+          data = urllib.request.urlopen(url, timeout=120).read()
+          assert len(data) == model["size"], "Model size mismatch"
+          assert hashlib.sha1(f"blob {len(data)}\0".encode() + data).hexdigest() == model["gitBlob"], "Model content mismatch"
+          path = pathlib.Path("ios/.build/ocr-test-data")
+          path.mkdir(parents=True, exist_ok=True)
+          (path / "eng.traineddata").write_bytes(data)
+          PY
+          framework=$(find "$RUNNER_TEMP/FreeScanDerivedData/SourcePackages/artifacts" -type d -path '*/macos-*/opencv2.framework' -print -quit)
+          test -n "$framework"
+          xcrun clang++ -std=c++17 ios/tests/TesseractCoreTests.cpp \
+            -I ios/.build/ocr-host/include -L ios/.build/ocr-host/lib -ltesseract -lleptonica \
+            -F "$(dirname "$framework")" -framework opencv2 \
+            -framework Accelerate -framework AVFoundation -framework CoreImage \
+            -framework CoreMedia -framework CoreVideo -framework OpenCL -lz -liconv \
+            -o "$RUNNER_TEMP/TesseractCoreTests"
+          "$RUNNER_TEMP/TesseractCoreTests" "$GITHUB_WORKSPACE/ios/.build/ocr-test-data"
 
       - name: Validate Apple signing secrets
         shell: bash
