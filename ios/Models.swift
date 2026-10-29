@@ -103,6 +103,91 @@ final class ScanLibrary: ObservableObject {
     }
 }
 
+/// Keep folder security scopes open while library rows are available to Files,
+/// the editor, print UI and share sheet. Persist bookmarks rather than PDF copies.
+@MainActor
+final class ExternalPDFLibrary: ObservableObject {
+    @Published private(set) var folders: [URL] = []
+    @Published private(set) var pdfs: [URL] = []
+    @Published var errorMessage: String?
+    private let bookmarkKey = "externalPDFFolderBookmarks"
+    private var scopedFolders = Set<URL>()
+
+    init() {
+        let bookmarks = UserDefaults.standard.array(forKey: bookmarkKey) as? [Data] ?? []
+        for bookmark in bookmarks {
+            do {
+                var stale = false
+                let url = try URL(resolvingBookmarkData: bookmark, options: [], relativeTo: nil,
+                                  bookmarkDataIsStale: &stale)
+                if url.startAccessingSecurityScopedResource() { scopedFolders.insert(url) }
+                folders.append(url)
+            } catch { errorMessage = "部分文件夹授权已失效，请重新选择。" }
+        }
+        persistBookmarks()
+    }
+
+    deinit {
+        for url in scopedFolders { url.stopAccessingSecurityScopedResource() }
+    }
+
+    func addFolder(_ url: URL) throws {
+        guard !folders.contains(where: { $0.standardizedFileURL == url.standardizedFileURL }) else { return }
+        let scoped = url.startAccessingSecurityScopedResource()
+        do {
+            _ = try url.bookmarkData(options: .minimalBookmark, includingResourceValuesForKeys: nil, relativeTo: nil)
+            folders.append(url)
+            if scoped { scopedFolders.insert(url) }
+            persistBookmarks()
+        } catch {
+            if scoped { url.stopAccessingSecurityScopedResource() }
+            throw error
+        }
+    }
+
+    func removeFolder(_ url: URL) {
+        folders.removeAll { $0 == url }
+        if scopedFolders.remove(url) != nil { url.stopAccessingSecurityScopedResource() }
+        pdfs.removeAll { $0.path.hasPrefix(url.path + "/") }
+        persistBookmarks()
+    }
+
+    func refresh() async {
+        let roots = folders
+        let found = await Task.detached(priority: .utility) {
+            var result = Set<URL>()
+            var failed = false
+            for root in roots {
+                guard let enumerator = FileManager.default.enumerator(
+                    at: root, includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey],
+                    options: [.skipsHiddenFiles, .skipsPackageDescendants], errorHandler: { _, _ in
+                        failed = true
+                        return true
+                    }) else { failed = true; continue }
+                for case let url as URL in enumerator {
+                    if Task.isCancelled { break }
+                    let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+                    guard values?.isSymbolicLink != true, values?.isRegularFile == true,
+                          url.pathExtension.lowercased() == "pdf" else { continue }
+                    result.insert(url.standardizedFileURL)
+                }
+            }
+            return (Array(result), failed)
+        }.value
+        // A folder may have been removed while its enumeration was running.
+        guard roots == folders, !Task.isCancelled else { return }
+        pdfs = found.0
+        if found.1 { errorMessage = "部分文件夹暂时无法读取，请检查文件提供商或重新授权。" }
+    }
+
+    private func persistBookmarks() {
+        let bookmarks = folders.compactMap {
+            try? $0.bookmarkData(options: .minimalBookmark, includingResourceValuesForKeys: nil, relativeTo: nil)
+        }
+        UserDefaults.standard.set(bookmarks, forKey: bookmarkKey)
+    }
+}
+
 private enum ScanDraftPersistence {
     private struct Pointer: Codable {
         let generation: String

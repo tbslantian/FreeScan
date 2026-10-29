@@ -32,6 +32,23 @@ enum PDFServices {
     }
 
     static func images(from url: URL, maxDimension: CGFloat = 2200) throws -> [UIImage] {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        let coordinator = NSFileCoordinator(filePresenter: nil)
+        var coordinationError: NSError?
+        var result: Result<[UIImage], Error>?
+        coordinator.coordinate(readingItemAt: url, options: .withoutChanges, error: &coordinationError) { readable in
+            result = Result { try renderImages(from: readable, maxDimension: maxDimension) }
+        }
+        if let coordinationError { throw coordinationError }
+        guard let result else {
+            throw NSError(domain: "FreeScan.PDF", code: 4,
+                          userInfo: [NSLocalizedDescriptionKey: "文件提供商未能提供可读取的 PDF。"])
+        }
+        return try result.get()
+    }
+
+    private static func renderImages(from url: URL, maxDimension: CGFloat) throws -> [UIImage] {
         guard let document = PDFDocument(url: url) else {
             throw NSError(domain: "FreeScan.PDF", code: 1,
                           userInfo: [NSLocalizedDescriptionKey: "无法打开 PDF。文件可能已损坏或受密码保护。"])

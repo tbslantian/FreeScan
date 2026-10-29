@@ -908,6 +908,9 @@ struct BrushEraserView: View {
 
 struct DocumentsView: View {
     @EnvironmentObject private var library: ScanLibrary
+    @Environment(\.scenePhase) private var scenePhase
+    @StateObject private var externalLibrary = ExternalPDFLibrary()
+    @State private var showFolderPicker = false
     @State private var showImporter = false
     @State private var showEditor = false
     @State private var searchText = ""
@@ -922,15 +925,15 @@ struct DocumentsView: View {
     private var savedPDFs: [URL] {
         _ = libraryRevision
         let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
-        return (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil))?
-            .filter { $0.pathExtension.lowercased() == "pdf" }
+        let local = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? []
+        return Array(Set(local.filter { $0.pathExtension.lowercased() == "pdf" } + externalLibrary.pdfs))
             .sorted { lhs, rhs in
                 let keys: Set<URLResourceKey> = [.contentModificationDateKey]
                 let lhsDate = (try? lhs.resourceValues(forKeys: keys).contentModificationDate) ?? .distantPast
                 let rhsDate = (try? rhs.resourceValues(forKeys: keys).contentModificationDate) ?? .distantPast
                 if lhsDate != rhsDate { return lhsDate > rhsDate }
                 return lhs.lastPathComponent.localizedStandardCompare(rhs.lastPathComponent) == .orderedAscending
-            } ?? []
+            }
     }
     private func metadataText(for url: URL) -> String {
         let keys: Set<URLResourceKey> = [.fileSizeKey, .contentModificationDateKey]
@@ -951,7 +954,7 @@ struct DocumentsView: View {
                         Label("编辑当前扫描 · \(library.pages.count) 页", systemImage: "square.stack.3d.up")
                     }
                 }
-                Section("最近导出 PDF") {
+                Section("PDF 文档") {
                     if visiblePDFs.isEmpty { Text(searchText.isEmpty ? "导出的文件会显示在这里。" : "没有匹配的 PDF。")
                         .foregroundStyle(.secondary) }
                     ForEach(visiblePDFs, id: \.absoluteString) { url in
@@ -980,9 +983,41 @@ struct DocumentsView: View {
                     }
                 }
                 Section { Button { showImporter = true } label: { Label("导入 PDF 到文档库", systemImage: "folder.badge.plus") } }
+                Section("文件夹") {
+                    Button { showFolderPicker = true } label: {
+                        Label("关联文件夹（直接读取 PDF）", systemImage: "folder.badge.gearshape")
+                    }
+                    ForEach(externalLibrary.folders, id: \.absoluteString) { folder in
+                        HStack {
+                            Text(folder.lastPathComponent)
+                            Spacer()
+                            Button("取消关联") { externalLibrary.removeFolder(folder) }
+                        }
+                    }
+                    if let warning = externalLibrary.errorMessage {
+                        Text(warning).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
             }
             .navigationTitle("文档")
             .searchable(text: $searchText, prompt: "搜索 PDF")
+            .refreshable { await externalLibrary.refresh(); libraryRevision += 1 }
+            .task {
+                while !Task.isCancelled {
+                    if scenePhase == .active { await externalLibrary.refresh(); libraryRevision += 1 }
+                    do { try await Task.sleep(for: .seconds(5)) } catch { break }
+                }
+            }
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .active { Task { await externalLibrary.refresh(); libraryRevision += 1 } }
+            }
+            .fileImporter(isPresented: $showFolderPicker, allowedContentTypes: [.folder]) { result in
+                guard case .success(let url) = result else { return }
+                do {
+                    try externalLibrary.addFolder(url)
+                    Task { await externalLibrary.refresh() }
+                } catch { errorText = error.localizedDescription }
+            }
             .navigationDestination(isPresented: $showEditor) { ScanEditorView() }
             .fileImporter(isPresented: $showImporter, allowedContentTypes: [.pdf], allowsMultipleSelection: true) { result in
                 guard case .success(let urls) = result else { return }
@@ -1031,13 +1066,15 @@ struct DocumentsView: View {
             errorText = "已有同名文件，请换一个名称。"
             return
         }
-        do { try FileManager.default.moveItem(at: source, to: target) }
+        do { try FileManager.default.moveItem(at: source, to: target); libraryRevision += 1
+            Task { await externalLibrary.refresh() } }
         catch { errorText = error.localizedDescription }
         pdfPendingRename = nil
     }
     private func deletePendingPDF() {
         guard let url = pdfPendingDeletion else { return }
-        do { try FileManager.default.removeItem(at: url) }
+        do { try FileManager.default.removeItem(at: url); libraryRevision += 1
+            Task { await externalLibrary.refresh() } }
         catch { errorText = error.localizedDescription }
         pdfPendingDeletion = nil
     }
@@ -1355,7 +1392,7 @@ private extension CGFloat {
 private extension View {
     @ViewBuilder
     func cameraShutterEvents(isEnabled: Bool, action: @escaping () -> Void) -> some View {
-        if #available(iOS 17.2, *) {
+        if #available(iOS 18.0, *) {
             self.onCameraCaptureEvent(isEnabled: isEnabled) { event in
                 if event.phase == .ended { action() }
             }

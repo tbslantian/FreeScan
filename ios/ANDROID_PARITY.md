@@ -17,7 +17,7 @@ Status is based on the current Android screens and services under `app/src/main/
 - [x] Camera: throttled Vision rectangle detection, a smoothed four-corner perspective outline, 1080p/2K/4K output sizing, flash modes, and torch control.
 - [x] Camera: optional three-frame capture that retains the sharpest frame.
 - [x] Camera: match Android's three-consecutive-frame quad stabilizer and its 20 px movement threshold on a 640×480 reference preview.
-- [x] Camera: use Apple's camera capture events for hardware volume-key shutter on iOS 17.2 and later, only while capture is ready and no captured-photo review is visible. iOS 17.0/17.1 retain the on-screen shutter.
+- [x] Camera: use Apple's SwiftUI camera capture events for hardware volume-key shutter on iOS 18 and later, only while capture is ready and no captured-photo review is visible. iOS 17 retains the on-screen shutter.
 - [x] Editor: draggable four-corner perspective crop instead of only rectangular edge sliders.
 - [x] Camera workflow: capture review/retake, continuous multi-page capture, and multiple-photo import in one operation.
 - [x] Certificate scanner: nine template names, template-specific live preview aspect ratios, and matching document-field guide drawings.
@@ -26,7 +26,7 @@ Status is based on the current Android screens and services under `app/src/main/
 - [x] Library: search, open into the editor, rename, print, share, and delete saved PDFs.
 - [x] Library: show file size and modified date for app-local PDFs and sort newest first.
 - [x] Library: import one or multiple PDFs from Files into the app-local library so they remain available for open, rename, share, print, and delete.
-- [ ] Library: continuously discover PDFs in user-selected external folders without copying them, as Android does.
+- [x] Library: persist bookmarks for user-selected Files folders, index their PDFs recursively without copying, refresh while the library is active and when returning to the app, and support manual refresh and unlinking. File-provider behavior still requires device validation.
 - [x] Export: share every page in multi-page JPEG exports instead of silently sharing only the first page.
 - [x] Export: size each PDF page independently from its image aspect ratio, preserving mixed portrait and landscape documents within Android's A4/Letter edge limits.
 - [x] Export: use the saved PDF/JPEG preference and JPEG quality setting in scanner and QR/watermark exports.
