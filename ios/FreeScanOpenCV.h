@@ -6,7 +6,7 @@ NS_ASSUME_NONNULL_BEGIN
 @interface FreeScanQRCodeCandidate : NSObject
 @property(nonatomic, readonly) CGRect bounds;
 @property(nonatomic, readonly) BOOL verified;
-@property(nonatomic, readonly) NSArray<NSValue *> *corners;
+@property(nonatomic, readonly, copy) NSArray<NSValue *> *corners;
 - (instancetype)initWithCorners:(NSArray<NSValue *> *)corners verified:(BOOL)verified;
 @end
 

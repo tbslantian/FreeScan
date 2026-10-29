@@ -323,10 +323,6 @@ enum ImagePipeline {
         return FreeScanOpenCV.removeColoredInk(source) ?? source
     }
 
-    static func qrRectangles(in image: UIImage) -> [CGRect] {
-        qrCandidates(in: image).filter(\.automaticallyRepairable).map(\.bounds)
-    }
-
     static func qrCandidates(in image: UIImage) -> [QRDetectionCandidate] {
         let image = upright(image)
         guard image.cgImage != nil else { return [] }

@@ -1197,17 +1197,17 @@ struct WatermarkToolView: View {
         isRepairing = true
         Task {
             do {
-            let result = try await Task.detached(priority: .userInitiated) {
-                var repaired = 0
-                let output = try snapshot.map { page in
-                    let regions = ImagePipeline.qrCandidates(in: page).filter(\.automaticallyRepairable)
-                    repaired += regions.count
-                    return regions.isEmpty ? page : try ImagePipeline.repair(page, candidates: regions)
-                }
-                return (output, repaired)
-            }.value
-            images = result.0
-            message = result.1 == 0 ? "没有检测到 QR 码，可改用手动框选。" : "已在 \(images.count) 页中修复 \(result.1) 个 QR 区域。"
+                let result = try await Task.detached(priority: .userInitiated) {
+                    var repaired = 0
+                    let output = try snapshot.map { page in
+                        let regions = ImagePipeline.qrCandidates(in: page).filter(\.automaticallyRepairable)
+                        repaired += regions.count
+                        return regions.isEmpty ? page : try ImagePipeline.repair(page, candidates: regions)
+                    }
+                    return (output, repaired)
+                }.value
+                images = result.0
+                message = result.1 == 0 ? "没有检测到 QR 码，可改用手动框选。" : "已在 \(images.count) 页中修复 \(result.1) 个 QR 区域。"
             } catch { errorText = error.localizedDescription }
             isRepairing = false
         }
@@ -1381,14 +1381,14 @@ private struct WatermarkReviewView: View {
         isRepairing = true
         Task {
             do {
-            let repaired = try await Task.detached(priority: .userInitiated) {
-                try snapshot.enumerated().map { index, image in
-                    regions[index].isEmpty ? image : try ImagePipeline.repair(image, candidates: regions[index])
-                }
-            }.value
-            images = repaired
-            onComplete(count)
-            dismiss()
+                let repaired = try await Task.detached(priority: .userInitiated) {
+                    try snapshot.enumerated().map { index, image in
+                        regions[index].isEmpty ? image : try ImagePipeline.repair(image, candidates: regions[index])
+                    }
+                }.value
+                images = repaired
+                onComplete(count)
+                dismiss()
             } catch {
                 isRepairing = false
                 errorText = error.localizedDescription
