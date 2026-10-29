@@ -26,12 +26,17 @@ enum QRDetectionKind: String {
 struct QRDetectionCandidate: Identifiable {
     let id: UUID
     var bounds: CGRect
+    let corners: [CGPoint]
     let kind: QRDetectionKind
     let automaticallyRepairable: Bool
 
-    init(id: UUID = UUID(), bounds: CGRect, kind: QRDetectionKind, automaticallyRepairable: Bool) {
+    init(id: UUID = UUID(), bounds: CGRect, kind: QRDetectionKind, automaticallyRepairable: Bool, corners: [CGPoint]? = nil) {
         self.id = id
         self.bounds = bounds
+        self.corners = corners ?? [CGPoint(x: bounds.minX, y: bounds.minY),
+                                   CGPoint(x: bounds.maxX, y: bounds.minY),
+                                   CGPoint(x: bounds.maxX, y: bounds.maxY),
+                                   CGPoint(x: bounds.minX, y: bounds.maxY)]
         self.kind = kind
         self.automaticallyRepairable = automaticallyRepairable
     }
@@ -328,7 +333,8 @@ enum ImagePipeline {
         var regions = FreeScanOpenCV.qrCandidates(image).map { native in
             QRDetectionCandidate(bounds: native.bounds,
                                  kind: native.verified ? .verified : .unverified,
-                                 automaticallyRepairable: native.verified)
+                                 automaticallyRepairable: native.verified,
+                                 corners: native.corners.map(\.cgPointValue))
         }
         func overlapFraction(_ a: CGRect, _ b: CGRect) -> CGFloat {
             let intersection = a.intersection(b)
@@ -369,36 +375,24 @@ enum ImagePipeline {
         return regions
     }
 
-    /// Fast local repair by interpolating colors from opposite region borders.
-    /// This is suitable for small marks over plain paper, not complex photo content.
-    static func repair(_ image: UIImage, regions: [CGRect]) -> UIImage {
-        let image = upright(image)
-        guard let buffer = RGBAImage(image), !regions.isEmpty else { return image }
-        var pixels = buffer.pixels
-        for region in regions {
-            let r = region.standardized.intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
-            let left = max(0, Int(r.minX * CGFloat(buffer.width)))
-            let right = min(buffer.width - 1, Int(r.maxX * CGFloat(buffer.width)))
-            let top = max(0, Int(r.minY * CGFloat(buffer.height)))
-            let bottom = min(buffer.height - 1, Int(r.maxY * CGFloat(buffer.height)))
-            guard right > left, bottom > top else { continue }
-            for y in top...bottom {
-                let t = CGFloat(y - top) / CGFloat(max(1, bottom - top))
-                let c0 = buffer.pixel(x: max(0, left - 1), y: y)
-                let c1 = buffer.pixel(x: min(buffer.width - 1, right + 1), y: y)
-                for x in left...right {
-                    let from = buffer.pixel(x: x, y: max(0, top - 1))
-                    let to = buffer.pixel(x: x, y: min(buffer.height - 1, bottom + 1))
-                    let vertical = RGBAImage.Pixel.lerp(from, to, t)
-                    let horizontal = RGBAImage.Pixel.lerp(c0, c1, CGFloat(x - left) / CGFloat(max(1, right - left)))
-                    // Prefer the interpolation direction whose border samples are closer in luminance.
-                    let horizontalCost = abs(c0.luminance - c1.luminance)
-                    let verticalCost = abs(from.luminance - to.luminance)
-                    buffer.setPixel(horizontalCost <= verticalCost ? horizontal : vertical, x: x, y: y, in: &pixels)
-                }
-            }
+    static func repair(_ image: UIImage, regions: [CGRect]) throws -> UIImage {
+        try repair(image, candidates: regions.map {
+            QRDetectionCandidate(bounds: $0, kind: .manual, automaticallyRepairable: false)
+        })
+    }
+
+    /// Keep decoded QR quadrilaterals through selection and repair; don't widen
+    /// a rotated code into a rectangular erase mask.
+    static func repair(_ image: UIImage, candidates: [QRDetectionCandidate]) throws -> UIImage {
+        let source = upright(image)
+        guard !candidates.isEmpty else { return source }
+        let polygons = candidates.map { $0.corners.map { NSValue(cgPoint: $0) } }
+        let verified = candidates.map { NSNumber(value: $0.kind == .verified) }
+        guard let repaired = FreeScanOpenCV.repairRegions(source, corners: polygons, verified: verified) else {
+            throw NSError(domain: "FreeScan.QRRepair", code: 1,
+                          userInfo: [NSLocalizedDescriptionKey: "选区周围没有足够的可用背景，或修复失败。请缩小选区后重试。"])
         }
-        return buffer.image(from: pixels) ?? image
+        return repaired
     }
 
     /// Convert normalized brush points to native pixels and use Android's

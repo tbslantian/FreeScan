@@ -5,12 +5,21 @@
 #import <opencv2/opencv.hpp>
 #import <opencv2/imgcodecs/ios.h>
 #import "FreeScanOpenCV.h"
+#include "QRRepairCore.hpp"
 #include <algorithm>
 #include <cmath>
 
 @implementation FreeScanQRCodeCandidate
-- (instancetype)initWithBounds:(CGRect)bounds verified:(BOOL)verified {
-    if ((self = [super init])) { _bounds = bounds; _verified = verified; }
+- (instancetype)initWithCorners:(NSArray<NSValue *> *)corners verified:(BOOL)verified {
+    if ((self = [super init])) {
+        _corners = [corners copy]; _verified = verified;
+        CGFloat x0=1,y0=1,x1=0,y1=0;
+        for (NSValue *value in corners) {
+            CGPoint p=value.CGPointValue;
+            x0=std::min(x0,p.x);y0=std::min(y0,p.y);x1=std::max(x1,p.x);y1=std::max(y1,p.y);
+        }
+        _bounds=CGRectMake(x0,y0,x1-x0,y1-y0);
+    }
     return self;
 }
 @end
@@ -18,6 +27,7 @@
 struct QRRegion {
     cv::Rect2f bounds;
     bool verified;
+    std::vector<cv::Point2f> corners;
 };
 
 static float overlap(const cv::Rect2f &a, const cv::Rect2f &b) {
@@ -84,17 +94,19 @@ static void detectQRView(const cv::Mat &rgba, const cv::Rect &roi,
                 bool readable = canDecode(detector, input, quad) ||
                     (input.data != gray.data && canDecode(detectors[0], gray, quad));
                 float minX = 1, minY = 1, maxX = 0, maxY = 0;
+                std::vector<cv::Point2f> normalizedCorners;
                 for (int i = 0; i < 4; ++i) {
                     cv::Point2f p = quad.at<cv::Point2f>(0, i);
                     float x = std::clamp(float((roi.x + p.x * roi.width / gray.cols) / rgba.cols), 0.f, 1.f);
                     float y = std::clamp(float((roi.y + p.y * roi.height / gray.rows) / rgba.rows), 0.f, 1.f);
                     minX = std::min(minX, x); maxX = std::max(maxX, x);
                     minY = std::min(minY, y); maxY = std::max(maxY, y);
+                    normalizedCorners.emplace_back(x,y);
                 }
                 cv::Rect2f bounds(minX, minY, maxX - minX, maxY - minY);
                 bool safe = std::max(bounds.width * rgba.cols, bounds.height * rgba.rows) <=
                     std::min(rgba.cols, rgba.rows) * 0.30f;
-                QRRegion candidate{bounds, readable && safe};
+                QRRegion candidate{bounds, readable && safe, normalizedCorners};
                 anyVerified |= candidate.verified;
                 auto existing = std::find_if(regions.begin(), regions.end(), [&](const QRRegion &r) {
                     return overlap(r.bounds, bounds) > 0.65f && overlap(bounds, r.bounds) > 0.65f;
@@ -161,14 +173,37 @@ static UIImage *repairedImage(cv::Mat &rgba, const cv::Rect &roi,
             }
         }
         for (const auto &r : regions) {
+            NSMutableArray<NSValue *> *corners=[NSMutableArray array];
+            for (auto p:r.corners) [corners addObject:[NSValue valueWithCGPoint:CGPointMake(p.x,p.y)]];
             [output addObject:[[FreeScanQRCodeCandidate alloc]
-                initWithBounds:CGRectMake(r.bounds.x, r.bounds.y, r.bounds.width, r.bounds.height)
+                initWithCorners:corners
                 verified:r.verified]];
         }
     } catch (const std::exception &error) {
         NSLog(@"FreeScan QR detection failed: %s", error.what());
     }
     return output;
+}
++ (UIImage *)repairRegions:(UIImage *)image corners:(NSArray<NSArray<NSValue *> *> *)corners
+                  verified:(NSArray<NSNumber *> *)verified {
+    try {
+        if (corners.count!=verified.count) return nil;
+        cv::Mat rgba=rgbaImage(image);
+        if (rgba.empty()) return nil;
+        std::vector<freescan::RepairRegion> regions;
+        for (NSUInteger i=0;i<corners.count;++i) {
+            freescan::RepairRegion region{{},verified[i].boolValue};
+            for (NSValue *value in corners[i]) {
+                CGPoint p=value.CGPointValue;region.corners.emplace_back(p.x,p.y);
+            }
+            regions.push_back(region);
+        }
+        freescan::repairRegions(rgba,regions);
+        return MatToUIImage(rgba);
+    } catch (const std::exception &error) {
+        NSLog(@"FreeScan polygon repair failed: %s",error.what());
+        return nil;
+    }
 }
 + (UIImage *)removeColoredInk:(UIImage *)image {
     try {

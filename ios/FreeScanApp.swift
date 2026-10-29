@@ -721,6 +721,7 @@ struct ManualRepairView: View {
     let onApply: (UIImage) -> Void
     @State private var regions: [CGRect] = []
     @State private var currentRegion: CGRect?
+    @State private var errorText: String?
 
     var body: some View {
         NavigationStack {
@@ -772,12 +773,17 @@ struct ManualRepairView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("修复") {
                         guard !regions.isEmpty else { return }
-                        onApply(ImagePipeline.repair(image, regions: regions))
-                        dismiss()
+                        do {
+                            onApply(try ImagePipeline.repair(image, regions: regions))
+                            dismiss()
+                        } catch { errorText = error.localizedDescription }
                     }.disabled(regions.isEmpty)
                 }
             }
         }
+        .alert("修复失败", isPresented: Binding(get: { errorText != nil }, set: { if !$0 { errorText = nil } })) {
+            Button("好") { errorText = nil }
+        } message: { Text(errorText ?? "") }
     }
 
     private func normalized(_ point: CGPoint, inside rect: CGRect) -> CGPoint {
@@ -1190,17 +1196,19 @@ struct WatermarkToolView: View {
         let snapshot = images
         isRepairing = true
         Task {
-            let result = await Task.detached(priority: .userInitiated) {
+            do {
+            let result = try await Task.detached(priority: .userInitiated) {
                 var repaired = 0
-                let output = snapshot.map { page in
-                    let regions = ImagePipeline.qrRectangles(in: page)
+                let output = try snapshot.map { page in
+                    let regions = ImagePipeline.qrCandidates(in: page).filter(\.automaticallyRepairable)
                     repaired += regions.count
-                    return regions.isEmpty ? page : ImagePipeline.repair(page, regions: regions)
+                    return regions.isEmpty ? page : try ImagePipeline.repair(page, candidates: regions)
                 }
                 return (output, repaired)
             }.value
             images = result.0
             message = result.1 == 0 ? "没有检测到 QR 码，可改用手动框选。" : "已在 \(images.count) 页中修复 \(result.1) 个 QR 区域。"
+            } catch { errorText = error.localizedDescription }
             isRepairing = false
         }
     }
@@ -1229,6 +1237,7 @@ private struct WatermarkReviewView: View {
     @State private var dragEnd: CGPoint?
     @State private var isDetecting = true
     @State private var isRepairing = false
+    @State private var errorText: String?
 
     private var page: UIImage? { images.indices.contains(selectedIndex) ? images[selectedIndex] : nil }
     private var currentCandidates: [QRDetectionCandidate] {
@@ -1249,12 +1258,16 @@ private struct WatermarkReviewView: View {
                                 .resizable().scaledToFit()
                                 .frame(width: geometry.size.width, height: geometry.size.height)
                             ForEach(currentCandidates) { candidate in
-                                let rect = screenRect(candidate.bounds, in: fitted)
-                                RoundedRectangle(cornerRadius: 3)
+                                Path { path in
+                                    for (index, point) in candidate.corners.enumerated() {
+                                        let screen = CGPoint(x: fitted.minX + point.x * fitted.width,
+                                                             y: fitted.minY + point.y * fitted.height)
+                                        if index == 0 { path.move(to: screen) } else { path.addLine(to: screen) }
+                                    }
+                                    path.closeSubpath()
+                                }
                                     .stroke(selected.contains(candidate.id) ? Color.green : Color.orange,
                                             style: StrokeStyle(lineWidth: 2, dash: selected.contains(candidate.id) ? [] : [6, 4]))
-                                    .frame(width: max(2, rect.width), height: max(2, rect.height))
-                                    .position(x: rect.midX, y: rect.midY)
                             }
                             if let start = dragStart, let end = dragEnd {
                                 let rect = screenRect(CGRect(x: min(start.x, end.x), y: min(start.y, end.y),
@@ -1341,6 +1354,9 @@ private struct WatermarkReviewView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .topBarLeading) { Button("取消") { dismiss() } } }
             .task { await detectCandidates() }
+            .alert("修复失败", isPresented: Binding(get: { errorText != nil }, set: { if !$0 { errorText = nil } })) {
+                Button("好") { errorText = nil }
+            } message: { Text(errorText ?? "") }
         }
     }
 
@@ -1358,20 +1374,25 @@ private struct WatermarkReviewView: View {
         let snapshot = images
         let regions = snapshot.indices.map { index in
             candidates.indices.contains(index)
-                ? candidates[index].filter { selected.contains($0.id) }.map(\.bounds)
+                ? candidates[index].filter { selected.contains($0.id) }
                 : []
         }
         let count = regions.reduce(0) { $0 + $1.count }
         isRepairing = true
         Task {
-            let repaired = await Task.detached(priority: .userInitiated) {
-                snapshot.enumerated().map { index, image in
-                    regions[index].isEmpty ? image : ImagePipeline.repair(image, regions: regions[index])
+            do {
+            let repaired = try await Task.detached(priority: .userInitiated) {
+                try snapshot.enumerated().map { index, image in
+                    regions[index].isEmpty ? image : try ImagePipeline.repair(image, candidates: regions[index])
                 }
             }.value
             images = repaired
             onComplete(count)
             dismiss()
+            } catch {
+                isRepairing = false
+                errorText = error.localizedDescription
+            }
         }
     }
 
