@@ -17,6 +17,8 @@ NS_ASSUME_NONNULL_BEGIN
 @end
 
 @interface FreeScanOpenCV : NSObject
++ (nullable UIImage *)filteredImage:(UIImage *)image mode:(NSInteger)mode shadows:(BOOL)shadows
+    NS_SWIFT_NAME(filtered(_:mode:shadows:));
 + (nullable FreeScanDeskewResult *)deskewText:(UIImage *)image NS_SWIFT_NAME(deskewText(_:));
 + (NSArray<FreeScanQRCodeCandidate *> *)qrCandidates:(UIImage *)image NS_SWIFT_NAME(qrCandidates(_:));
 + (nullable UIImage *)repairRegions:(UIImage *)image

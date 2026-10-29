@@ -524,8 +524,7 @@ struct ScanEditorView: View {
                 let selectedFilter = filter
                 let shouldRemoveShadows = removeShadowsEnabled
                 let result = await Task.detached(priority: .userInitiated) {
-                    let filtered = ImagePipeline.filtered(source, mode: selectedFilter)
-                    return shouldRemoveShadows ? ImagePipeline.removeShadows(filtered) : filtered
+                    ImagePipeline.filtered(source, mode: selectedFilter, removeShadows: shouldRemoveShadows)
                 }.value
                 previewImage = result
             }
@@ -601,8 +600,7 @@ struct ScanEditorView: View {
             do {
                 let processed = await Task.detached(priority: .userInitiated) {
                     source.map { page in
-                        let filtered = ImagePipeline.filtered(page.0, mode: page.1)
-                        return shouldRemoveShadows ? ImagePipeline.removeShadows(filtered) : filtered
+                        ImagePipeline.filtered(page.0, mode: page.1, removeShadows: shouldRemoveShadows)
                     }
                 }.value
                 var recognizedPages = [[RecognizedTextLine]]()
@@ -627,8 +625,7 @@ struct ScanEditorView: View {
             do {
                 let processed = await Task.detached(priority: .userInitiated) {
                     source.map { page in
-                        let filtered = ImagePipeline.filtered(page.0, mode: page.1)
-                        return shouldRemoveShadows ? ImagePipeline.removeShadows(filtered) : filtered
+                        ImagePipeline.filtered(page.0, mode: page.1, removeShadows: shouldRemoveShadows)
                     }
                 }.value
                 shareFile = ShareFile(urls: try PDFServices.makeJPEGs(from: processed, baseName: filename))
@@ -643,8 +640,7 @@ struct ScanEditorView: View {
             do {
                 let processed = await Task.detached(priority: .userInitiated) {
                     source.map { page in
-                        let filtered = ImagePipeline.filtered(page.0, mode: page.1)
-                        return shouldRemoveShadows ? ImagePipeline.removeShadows(filtered) : filtered
+                        ImagePipeline.filtered(page.0, mode: page.1, removeShadows: shouldRemoveShadows)
                     }
                 }.value
                 PDFServices.printPDF(at: try PDFServices.makePDF(from: processed, filename: filename))

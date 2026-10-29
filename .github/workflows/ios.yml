@@ -50,7 +50,7 @@ jobs:
           set -euo pipefail
           framework=$(find "$RUNNER_TEMP/FreeScanDerivedData/SourcePackages/artifacts" -type d -path '*/macos-*/opencv2.framework' -print -quit)
           test -n "$framework"
-          for native_test in QRRepairCoreTests DeskewCoreTests; do
+          for native_test in QRRepairCoreTests DeskewCoreTests DocumentFilterCoreTests; do
             xcrun clang++ -std=c++17 "ios/tests/$native_test.cpp" \
               -F "$(dirname "$framework")" -framework opencv2 \
               -framework Accelerate -framework AVFoundation -framework CoreImage \

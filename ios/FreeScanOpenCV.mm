@@ -7,6 +7,7 @@
 #import "FreeScanOpenCV.h"
 #include "QRRepairCore.hpp"
 #include "DeskewCore.hpp"
+#include "DocumentFilterCore.hpp"
 #include <algorithm>
 #include <cmath>
 
@@ -163,6 +164,18 @@ static UIImage *repairedImage(cv::Mat &rgba, const cv::Rect &roi,
 }
 
 @implementation FreeScanOpenCV
++ (UIImage *)filteredImage:(UIImage *)image mode:(NSInteger)mode shadows:(BOOL)shadows {
+    try {
+        cv::Mat rgba=rgbaImage(image),bgr,result;
+        if (rgba.empty()) return nil;
+        cv::cvtColor(rgba,bgr,cv::COLOR_RGBA2BGR);rgba.release();
+        auto filtered=freescan::documentFilter(bgr,int(mode),shadows);
+        cv::cvtColor(filtered,result,filtered.channels()==1?cv::COLOR_GRAY2RGBA:cv::COLOR_BGR2RGBA);
+        return MatToUIImage(result);
+    } catch (const std::exception &error) {
+        NSLog(@"FreeScan document filter failed: %s",error.what());return nil;
+    }
+}
 + (FreeScanDeskewResult *)deskewText:(UIImage *)image {
     try {
         cv::Mat rgba=rgbaImage(image);

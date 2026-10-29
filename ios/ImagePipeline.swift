@@ -68,13 +68,25 @@ enum ImagePipeline {
         }
     }
 
-    static func filtered(_ image: UIImage, mode: ScanFilter) -> UIImage {
-        let image = upright(image)
-        if mode == .automatic {
-            let resolved: ScanFilter = containsColor(image) ? .color : .grayscale
-            return filtered(image, mode: resolved)
+    /// Shared preview/export/print pipeline: flatten illumination before filtering.
+    static func filtered(_ image: UIImage, mode: ScanFilter, removeShadows: Bool = false) -> UIImage {
+        let source = upright(image)
+        if mode == .original { return source }
+        let nativeMode: Int?
+        switch mode {
+        case .color: nativeMode = 0
+        case .grayscale: nativeMode = 1
+        case .blackAndWhite: nativeMode = 2
+        case .automatic: nativeMode = 3
+        default: nativeMode = nil
         }
-        if mode == .original { return image }
+        if let nativeMode {
+            return FreeScanOpenCV.filtered(source, mode: nativeMode, shadows: removeShadows) ?? source
+        }
+        // Android's four legacy DocFilters depend on an Android-only binary.
+        // Keep their explicit Core Image approximation after common illumination correction.
+        let image = removeShadows
+            ? (FreeScanOpenCV.filtered(source, mode: 4, shadows: true) ?? source) : source
         guard let cgImage = image.cgImage else { return image }
         let input = CIImage(cgImage: cgImage)
         let controls = CIFilter.colorControls()
@@ -127,102 +139,6 @@ enum ImagePipeline {
         }
         guard let result = ciContext.createCGImage(output, from: output.extent) else { return image }
         return UIImage(cgImage: result, scale: image.scale, orientation: .up)
-    }
-
-    private static func containsColor(_ image: UIImage) -> Bool {
-        let sampleImage = UIGraphicsImageRenderer(size: CGSize(width: 64, height: 64)).image { _ in
-            image.draw(in: CGRect(x: 0, y: 0, width: 64, height: 64))
-        }
-        guard let buffer = RGBAImage(sampleImage), buffer.width > 0, buffer.height > 0 else { return true }
-        var colored = 0
-        var total = 0
-        for y in 0..<buffer.height {
-            for x in 0..<buffer.width {
-                let pixel = buffer.pixel(x: x, y: y)
-                let maximum = max(pixel.r, max(pixel.g, pixel.b))
-                let minimum = min(pixel.r, min(pixel.g, pixel.b))
-                if maximum > 0.12 && (maximum - minimum) / maximum > 0.12 { colored += 1 }
-                total += 1
-            }
-        }
-        return total > 0 && Double(colored) / Double(total) >= 0.025
-    }
-
-    /// Estimate the paper illumination on a coarse grid using bright local samples, then
-    /// normalize each pixel against that smooth field. This avoids a page-wide blur that
-    /// would wash out printed text.
-    static func removeShadows(_ image: UIImage) -> UIImage {
-        let image = upright(image)
-        guard let source = RGBAImage(image), source.width > 24, source.height > 24 else { return image }
-        let columns = 32
-        let rows = 32
-        var background = [CGFloat](repeating: 0.85, count: columns * rows)
-        for gy in 0..<rows {
-            for gx in 0..<columns {
-                let x0 = gx * source.width / columns
-                let x1 = max(x0 + 1, (gx + 1) * source.width / columns)
-                let y0 = gy * source.height / rows
-                let y1 = max(y0 + 1, (gy + 1) * source.height / rows)
-                let xStep = max(1, (x1 - x0) / 10)
-                let yStep = max(1, (y1 - y0) / 10)
-                var samples = [CGFloat]()
-                for y in stride(from: y0, to: min(y1, source.height), by: yStep) {
-                    for x in stride(from: x0, to: min(x1, source.width), by: xStep) {
-                        let i = (y * source.width + x) * 4
-                        let r = CGFloat(source.pixels[i]) / 255
-                        let g = CGFloat(source.pixels[i + 1]) / 255
-                        let b = CGFloat(source.pixels[i + 2]) / 255
-                        let luma = 0.299 * r + 0.587 * g + 0.114 * b
-                        if luma > 0.35 { samples.append(luma) }
-                    }
-                }
-                samples.sort()
-                let upper = samples.suffix(max(1, samples.count / 3))
-                background[gy * columns + gx] = upper.isEmpty ? 0.85 : upper.reduce(0, +) / CGFloat(upper.count)
-            }
-        }
-        // Smooth cell boundaries so the correction field does not imprint a grid.
-        for _ in 0..<2 {
-            var smoothed = background
-            for y in 0..<rows {
-                for x in 0..<columns {
-                    var total: CGFloat = 0
-                    var count: CGFloat = 0
-                    for sy in max(0, y - 1)...min(rows - 1, y + 1) {
-                        for sx in max(0, x - 1)...min(columns - 1, x + 1) {
-                            total += background[sy * columns + sx]
-                            count += 1
-                        }
-                    }
-                    smoothed[y * columns + x] = total / count
-                }
-            }
-            background = smoothed
-        }
-        let sortedBackground = background.sorted()
-        let target = sortedBackground[sortedBackground.count / 2]
-        var output = source.pixels
-        for y in 0..<source.height {
-            let gy = CGFloat(y) / CGFloat(max(1, source.height - 1)) * CGFloat(rows - 1)
-            let y0 = Int(gy)
-            let y1 = min(rows - 1, y0 + 1)
-            let ty = gy - CGFloat(y0)
-            for x in 0..<source.width {
-                let gx = CGFloat(x) / CGFloat(max(1, source.width - 1)) * CGFloat(columns - 1)
-                let x0 = Int(gx)
-                let x1 = min(columns - 1, x0 + 1)
-                let tx = gx - CGFloat(x0)
-                let top = background[y0 * columns + x0] * (1 - tx) + background[y0 * columns + x1] * tx
-                let bottom = background[y1 * columns + x0] * (1 - tx) + background[y1 * columns + x1] * tx
-                let local = max(0.18, top * (1 - ty) + bottom * ty)
-                let gain = min(1.42, max(0.72, target / local))
-                let index = (y * source.width + x) * 4
-                output[index] = UInt8(min(255, CGFloat(source.pixels[index]) * gain))
-                output[index + 1] = UInt8(min(255, CGFloat(source.pixels[index + 1]) * gain))
-                output[index + 2] = UInt8(min(255, CGFloat(source.pixels[index + 2]) * gain))
-            }
-        }
-        return source.image(from: output) ?? image
     }
 
     static func rotated(_ image: UIImage, clockwiseDegrees: Int) -> UIImage {
