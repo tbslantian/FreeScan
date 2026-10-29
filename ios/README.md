@@ -5,6 +5,7 @@ This is the native SwiftUI companion project for the Android FreeScan app. It ta
 ## Features
 
 - Camera capture and photo import, Vision document-edge detection, perspective correction, and optional auto-crop.
+- Guarded text-line deskew through OpenCV Canny/Hough/median angle: automatic after capture/photo auto-crop except in original mode, plus a manual editor action. It corrects 0.35–4 degree global tilt with at least four supporting lines; it does not flatten curved text or book pages.
 - Nine certificate/document framing templates with live camera guides.
 - Multi-page editing: page selection, rotation, manual crop, color/grayscale/black-and-white/enhance filters.
 - Single or multiple PDF import from Files into a persistent app-local library, editable image pages, PDF/JPEG export with custom names, Files sharing, and AirPrint.
@@ -20,7 +21,7 @@ Image-based PDF editing rasterizes imported pages before editing. QR repair keep
 
 The iOS implementation uses Apple Vision, Core Image, AVFoundation, PDFKit, PhotosUI, UIKit and OpenCV 4.12.0. QR detection uses the same standard/Aruco detectors, preprocessing passes, overview/tiles, geometric checks, decode verification and size guard as Android. The Quark blue-footer compatibility path is retained. QR repair ports Android's polygon and paper-plane model; OpenCV and Android Skia may rasterize polygon edges differently, so physical-device output comparison remains necessary. OCR uses the on-device Vision recognizer instead of downloadable Tesseract language packs. PDF pages are rasterized for editing, so original vectors are not retained; scanner exports can add a new searchable OCR text layer.
 
-GitHub Actions also runs native macOS regression checks of the shared C++ repair core against synthetic documents: rotated masks with adjacent printed content, unavailable background, dark-paper Telea fallback and large resampled patches. This does not build or publish a simulator app.
+GitHub Actions also runs native macOS regression checks of the shared C++ processing cores against synthetic documents: rotated masks with adjacent printed content, unavailable background, dark-paper Telea fallback, large resampled patches, positive/negative fractional line slopes, and unchanged straight/out-of-range/small images. This does not build or publish a simulator app.
 
 ## Device IPA build
 
