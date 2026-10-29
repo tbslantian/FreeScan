@@ -20,15 +20,17 @@ Image-based PDF editing rasterizes imported pages before editing. QR repair keep
 
 ## Platform mapping
 
-The iOS implementation uses Apple Vision, Core Image, AVFoundation, PDFKit, PhotosUI, UIKit and OpenCV 4.12.0. QR detection uses the same standard/Aruco detectors, preprocessing passes, overview/tiles, geometric checks, decode verification and size guard as Android. The Quark blue-footer compatibility path is retained. QR repair ports Android's polygon and paper-plane model; OpenCV and Android Skia may rasterize polygon edges differently, so physical-device output comparison remains necessary. OCR uses the on-device Vision recognizer instead of downloadable Tesseract language packs. PDF pages are rasterized for editing, so original vectors are not retained; scanner exports can add a new searchable OCR text layer.
+The iOS implementation uses Apple Vision, Core Image, AVFoundation, PDFKit, PhotosUI, UIKit, OpenCV 4.12.0 and source-built Tesseract 5.5.1/Leptonica 1.85. QR detection uses the same standard/Aruco detectors, preprocessing passes, overview/tiles, geometric checks, decode verification and size guard as Android. The Quark blue-footer compatibility path is retained. QR repair ports Android's polygon and paper-plane model; OpenCV and Android Skia may rasterize polygon edges differently, so physical-device output comparison remains necessary. OCR offers Vision or Tesseract with downloadable official language packs. Tesseract word boxes use the same confidence >50 cutoff as Android. PDF pages are rasterized for editing, so original vectors are not retained; scanner exports add a searchable text layer from the chosen OCR engine.
 
-GitHub Actions also runs native macOS regression checks of the shared C++ processing cores against synthetic documents: rotated masks with adjacent printed content, unavailable background, dark-paper Telea fallback, large resampled patches, positive/negative fractional line slopes, unchanged straight/out-of-range/small images, shadow reduction, text/color retention, binary output, blank paper, and dark fills with light print. This does not build or publish a simulator app.
+GitHub Actions also runs native macOS regression checks of the shared processing cores against synthetic documents: rotated masks with adjacent printed content, unavailable background, dark-paper Telea fallback, large resampled patches, positive/negative fractional line slopes, unchanged straight/out-of-range/small images, shadow reduction, text/color retention, binary output, blank paper, dark fills with light print, English and Chinese/English OCR, word boxes and corrupted language-pack rejection. Searchable-PDF checks extract Unicode text, verify selection coordinates and compare rendered pixels before/after adding the hidden text layer. This does not build or publish a simulator app.
 
 ## Device IPA build
 
 The GitHub Actions workflow builds a signed iPhone/iPad archive and exports an App Store Connect IPA. It does not produce a simulator build. The Release target is universal for iPhone and iPad (`TARGETED_DEVICE_FAMILY = 1,2`).
 
 Configure these GitHub Actions repository secrets before running the `iOS IPA` workflow:
+
+TestFlight/App Store distribution requires [Apple Developer Program membership](https://developer.apple.com/help/account/membership/programs-overview). Without its signing assets, the workflow can validate the device Release build and native processing tests, but then stops at `Validate Apple signing secrets` and does not upload an installable IPA.
 
 - `IOS_CERTIFICATE_P12_BASE64`: Base64 content of an Apple Distribution `.p12` certificate.
 - `IOS_CERTIFICATE_PASSWORD`: Password used when exporting the `.p12` file.

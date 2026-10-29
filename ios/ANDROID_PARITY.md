@@ -8,7 +8,7 @@ Status is based on the current Android screens and services under `app/src/main/
 - Nine document/certificate framing guides.
 - Multi-page image editing, rotation, page navigation, filters, and shadow correction.
 - PDF import as rendered pages, PDF/JPEG export, system sharing, and AirPrint.
-- On-device OCR through Vision, including automatic language detection and languages supported by the current iOS device.
+- Selectable on-device Vision OCR or Tesseract OCR with downloadable language packs.
 - Local QR detection/manual region repair and local color-heuristic handwriting cleanup.
 - Settings for automatic crop, filter, shadow correction, scan resolution, export format/quality, and OCR language.
 
@@ -33,9 +33,10 @@ Status is based on the current Android screens and services under `app/src/main/
 - [x] Export: use the saved PDF/JPEG preference and JPEG quality setting in scanner and QR/watermark exports.
 - [x] Export: set a custom output filename for edited scans and avoid overwriting an existing export with the same name.
 - [x] Export: choose a Files folder and persist access with a bookmark; mirror PDF/JPEG exports there while keeping app-local copies for library and sharing.
-- [x] Export: include an invisible searchable Vision OCR text layer in scanner PDFs using the selected OCR language.
+- [x] Export: include an invisible searchable OCR text layer in scanner PDFs using the selected Vision language or enabled Tesseract language packs.
+- [x] Searchable PDF: fit complete Unicode text to each OCR box using Core Text. Native checks confirm Chinese/English text extraction, selection coordinates and pixel-identical rendering with/without the hidden layer, including a narrow box that would otherwise wrap or clip text.
 - [x] OCR: list languages supported by the current iOS Vision implementation and allow automatic language detection.
-- [ ] OCR: Tesseract 5.5.1/Leptonica 1.85 source builds, the Android catalog's 120 downloadable language packs, multi-language enabling/removal/cancellation, fixed-revision model integrity validation, word confidence >50 and searchable-PDF word boxes are implemented. Device compilation and native recognition regression checks are pending. Vision remains a selectable system OCR engine; cross-device recognition coverage still requires validation.
+- [x] OCR: Tesseract 5.5.1/Leptonica 1.85 source builds, the Android catalog's 120 downloadable language packs, multi-language enabling/removal/cancellation, fixed-revision model integrity validation, word confidence >50 and searchable-PDF word boxes are implemented. The generic iPhone/iPad Release build and native regressions pass for English, Chinese/English joint recognition, confident Chinese word boxes, blank pages, missing models, and rejection of truncated/modified language packs. The built app's catalog and bundled licenses are checked. Vision remains selectable. Physical-device download/cancellation behavior, performance and recognition coverage across all 120 languages remain unverified.
 - [x] QR/watermark processing: verify decoded QR payloads before automatic repair, scan a 1600 px overview plus overlapping 1280 px source tiles, enforce Android's 30% auto-repair size limit, retain the Quark blue-footer fallback, process every imported PDF page, and retain manual region repair.
 - [x] QR/watermark processing: review decoded and undecoded QR candidates across all imported pages, toggle candidate regions, add manual rectangles, skip pages, and repair the selected regions.
 - [x] QR/watermark detection: use OpenCV 4.12 standard and Aruco QR detectors, validated quadrilaterals, payload decoding, grayscale/CLAHE/inverted/adaptive-threshold passes, 1600 px overview, overlapping 1280 px tiles, candidate upgrades and the 30% size guard, matching Android's detector path. Cross-device coverage comparison remains unverified.
