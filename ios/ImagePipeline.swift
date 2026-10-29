@@ -78,13 +78,15 @@ enum ImagePipeline {
         case .grayscale: nativeMode = 1
         case .blackAndWhite: nativeMode = 2
         case .automatic: nativeMode = 3
+        case .brighten: nativeMode = 5
+        case .localGrayscale: nativeMode = 7
         default: nativeMode = nil
         }
         if let nativeMode {
             return FreeScanOpenCV.filtered(source, mode: nativeMode, shadows: removeShadows) ?? source
         }
-        // Android's four legacy DocFilters depend on an Android-only binary.
-        // Keep their explicit Core Image approximation after common illumination correction.
+        // EnhanceImg's enhanced/soft paths still use Core Image approximations
+        // after common illumination correction; brightness/gray use native ports.
         let image = removeShadows
             ? (FreeScanOpenCV.filtered(source, mode: 4, shadows: true) ?? source) : source
         guard let cgImage = image.cgImage else { return image }
@@ -92,51 +94,27 @@ enum ImagePipeline {
         let controls = CIFilter.colorControls()
         controls.inputImage = input
         switch mode {
-        case .automatic, .original:
-            return image
-        case .color:
-            controls.saturation = 1.05
-            controls.contrast = 1.08
-            controls.brightness = 0.01
-        case .grayscale:
-            controls.saturation = 0
-            controls.contrast = 1.12
-            controls.brightness = 0.01
-        case .blackAndWhite:
-            controls.saturation = 0
-            controls.contrast = 2.15
-            controls.brightness = 0.08
-        case .brighten:
-            controls.saturation = 1
-            controls.contrast = 1.04
-            controls.brightness = 0.10
         case .enhance:
             controls.saturation = 0.92
             controls.contrast = 1.32
             controls.brightness = 0.035
-        case .localGrayscale:
-            controls.saturation = 0
-            controls.contrast = 1.32
-            controls.brightness = 0.025
         case .localSoft:
             controls.saturation = 0.96
             controls.contrast = 1.16
             controls.brightness = 0.035
+        default:
+            return image
         }
         guard var output = controls.outputImage else { return image }
-        if mode == .brighten || mode == .enhance || mode == .localSoft {
-            let shadows = CIFilter.highlightShadowAdjust()
-            shadows.inputImage = output
-            shadows.shadowAmount = mode == .brighten ? 0.65 : 0.35
-            shadows.highlightAmount = 0.85
-            output = shadows.outputImage ?? output
-        }
-        if mode == .enhance || mode == .localGrayscale || mode == .localSoft {
-            let sharpen = CIFilter.sharpenLuminance()
-            sharpen.inputImage = output
-            sharpen.sharpness = mode == .enhance ? 0.65 : 0.32
-            output = sharpen.outputImage ?? output
-        }
+        let shadows = CIFilter.highlightShadowAdjust()
+        shadows.inputImage = output
+        shadows.shadowAmount = 0.35
+        shadows.highlightAmount = 0.85
+        output = shadows.outputImage ?? output
+        let sharpen = CIFilter.sharpenLuminance()
+        sharpen.inputImage = output
+        sharpen.sharpness = mode == .enhance ? 0.65 : 0.32
+        output = sharpen.outputImage ?? output
         guard let result = ciContext.createCGImage(output, from: output.extent) else { return image }
         return UIImage(cgImage: result, scale: image.scale, orientation: .up)
     }

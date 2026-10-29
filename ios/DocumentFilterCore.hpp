@@ -4,6 +4,7 @@
 #include <opencv2/opencv.hpp>
 #include <algorithm>
 #include <cmath>
+#include "LegacyDocumentFilterCore.hpp"
 
 namespace freescan {
 // Port of imageprocessing/PostProcessing.kt. Core input/output uses BGR.
@@ -162,12 +163,15 @@ inline bool containsDocumentColor(const cv::Mat &bgr) {
     return double(colored)/pixels>.0003;
 }
 
-// 0=color, 1=gray, 2=bitonal, 3=auto, 4=illumination-only for local native filters.
+// 0=color, 1=gray, 2=bitonal, 3=auto, 4=illumination-only,
+// 5=legacy brightness, 7=legacy gray.
 inline cv::Mat documentFilter(const cv::Mat &bgr,int mode,bool shadows) {
     if (mode==3) mode=containsDocumentColor(bgr)?0:1;
     cv::Mat working=shadows?flattenIllumination(bgr,mode!=1 && mode!=2,mode==0):bgr.clone();
     if (mode==2) return binaryDocument(working);
     if (mode==1) return flattenedGray(working);
+    if (mode==5) return legacyBrightness(working);
+    if (mode==7) return legacyGray(working);
     return working;
 }
 } // namespace freescan
