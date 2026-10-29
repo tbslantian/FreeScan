@@ -409,6 +409,7 @@ struct ScanEditorView: View {
     @State private var showCrop = false
     @State private var showOCR = false
     @State private var recognizedText = ""
+    @State private var isRecognizing = false
     @State private var shareFile: ShareFile?
     @State private var errorText: String?
     @State private var exportFilename = ""
@@ -482,7 +483,10 @@ struct ScanEditorView: View {
                             Spacer()
                             Button { rotate(current) } label: { Label("旋转", systemImage: "rotate.right") }
                             Spacer()
-                            Button { Task { await runOCR(current) } } label: { Label("OCR", systemImage: "text.viewfinder") }
+                            Button { Task { await runOCR(current) } } label: {
+                                if isRecognizing { ProgressView("识别中…") }
+                                else { Label("OCR", systemImage: "text.viewfinder") }
+                            }.disabled(isRecognizing)
                         }.buttonStyle(.bordered).padding(.horizontal)
                         Button { deskew(current) } label: {
                             if isDeskewing { ProgressView("正在校正文字行…") }
@@ -534,7 +538,10 @@ struct ScanEditorView: View {
             .sheet(isPresented: $showCrop) { if let current { ManualCropView(page: current) } }
             .sheet(isPresented: $showOCR) {
                 NavigationStack {
-                    ScrollView { Text(recognizedText).frame(maxWidth: .infinity, alignment: .leading).padding() }
+                    ScrollView {
+                        Text(recognizedText).textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading).padding()
+                    }
                         .navigationTitle("文字识别")
                         .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("关闭") { showOCR = false } } }
                 }
@@ -588,9 +595,14 @@ struct ScanEditorView: View {
         }
     }
     private func runOCR(_ page: ScanPage) async {
+        guard !isRecognizing else { return }
+        isRecognizing = true
+        defer { isRecognizing = false }
         do {
             let language = UserDefaults.standard.string(forKey: "ocrLanguage") ?? "zh-Hans"
-            recognizedText = try await ImagePipeline.recognizeText(page.image, language: language)
+            let text = try await ImagePipeline.recognizeText(page.image, language: language)
+            guard current?.id == page.id else { return }
+            recognizedText = text
             showOCR = true
         } catch { errorText = error.localizedDescription }
     }

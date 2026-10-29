@@ -32,6 +32,9 @@ int main(int argc,char **argv) {
         require(bilingual.text.find(u8"扫描")!=std::string::npos && bilingual.text.find("12345")!=std::string::npos,
                 "Chinese/English multi-language recognition failed");
         require(!bilingual.words.empty(),"Bilingual word boxes missing");
+        std::string confidentText;
+        for (const auto &word:bilingual.words) confidentText+=word.text;
+        require(confidentText.find(u8"扫描")!=std::string::npos,"Searchable Chinese word boxes missing");
         std::cout<<"All Tesseract OCR regression checks passed\n";
         return 0;
     } catch (const std::exception &error) {std::cerr<<error.what()<<'\n';return 1;}
