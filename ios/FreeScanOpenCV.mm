@@ -8,6 +8,124 @@
 #include <algorithm>
 #include <cmath>
 
+@implementation FreeScanQRCodeCandidate
+- (instancetype)initWithBounds:(CGRect)bounds verified:(BOOL)verified {
+    if ((self = [super init])) { _bounds = bounds; _verified = verified; }
+    return self;
+}
+@end
+
+struct QRRegion {
+    cv::Rect2f bounds;
+    bool verified;
+};
+
+static float overlap(const cv::Rect2f &a, const cv::Rect2f &b) {
+    return (a & b).area() / std::max(0.000001f, a.area());
+}
+
+static bool canDecode(cv::GraphicalCodeDetector &detector, const cv::Mat &input, const cv::Mat &quad) {
+    try {
+        // C++ decode returns raw bytes in std::string. Android decodeBytes is
+        // generated from this same function, so non-UTF8 payloads also verify.
+        return !detector.decode(input, quad).empty();
+    } catch (const cv::Exception &) { return false; }
+}
+
+static std::vector<cv::Mat> detectQuads(cv::GraphicalCodeDetector &detector, const cv::Mat &input) {
+    std::vector<cv::Mat> result;
+    try {
+        cv::Mat points;
+        if (!detector.detectMulti(input, points) && !detector.detect(input, points)) return result;
+        if (points.empty()) return result;
+        cv::Mat flattened = points.reshape(2, 1);
+        if (flattened.depth() != CV_32F) flattened.convertTo(flattened, CV_32F);
+        for (int start = 0; start + 4 <= flattened.cols; start += 4) {
+            cv::Mat quad = flattened.colRange(start, start + 4).clone();
+            std::vector<cv::Point2f> corners;
+            bool valid = true;
+            for (int i = 0; i < 4; ++i) {
+                auto p = quad.at<cv::Point2f>(0, i);
+                if (!std::isfinite(p.x) || !std::isfinite(p.y) || p.x < -2 || p.y < -2 ||
+                    p.x > input.cols + 2 || p.y > input.rows + 2) { valid = false; break; }
+                corners.push_back(p);
+            }
+            if (!valid) continue;
+            float minX = corners[0].x, maxX = minX, minY = corners[0].y, maxY = minY;
+            for (const auto &p : corners) {
+                minX = std::min(minX, p.x); maxX = std::max(maxX, p.x);
+                minY = std::min(minY, p.y); maxY = std::max(maxY, p.y);
+            }
+            float w = maxX - minX, h = maxY - minY;
+            if (std::abs(cv::contourArea(corners)) < 64 || std::min(w, h) < 8 ||
+                std::max(w, h) > std::min(w, h) * 5) continue;
+            result.push_back(quad);
+        }
+    } catch (const cv::Exception &error) {
+        NSLog(@"FreeScan QR detection pass failed: %s", error.what());
+    }
+    return result;
+}
+
+static void detectQRView(const cv::Mat &rgba, const cv::Rect &roi,
+                         std::vector<cv::GraphicalCodeDetector> &detectors,
+                         std::vector<QRRegion> &regions) {
+    if (std::min(roi.width, roi.height) < 24) return;
+    cv::Mat view, gray, enhanced;
+    double scale = std::min(1.0, 1600.0 / std::max(roi.width, roi.height));
+    cv::resize(rgba(roi), view, cv::Size(std::max(1, int(std::round(roi.width * scale))),
+                                      std::max(1, int(std::round(roi.height * scale)))));
+    cv::cvtColor(view, gray, cv::COLOR_RGBA2GRAY);
+    view.release();
+    auto collect = [&](const cv::Mat &input) {
+        bool anyVerified = false;
+        for (auto &detector : detectors) {
+            for (const auto &quad : detectQuads(detector, input)) {
+                bool readable = canDecode(detector, input, quad) ||
+                    (input.data != gray.data && canDecode(detectors[0], gray, quad));
+                float minX = 1, minY = 1, maxX = 0, maxY = 0;
+                for (int i = 0; i < 4; ++i) {
+                    cv::Point2f p = quad.at<cv::Point2f>(0, i);
+                    float x = std::clamp(float((roi.x + p.x * roi.width / gray.cols) / rgba.cols), 0.f, 1.f);
+                    float y = std::clamp(float((roi.y + p.y * roi.height / gray.rows) / rgba.rows), 0.f, 1.f);
+                    minX = std::min(minX, x); maxX = std::max(maxX, x);
+                    minY = std::min(minY, y); maxY = std::max(maxY, y);
+                }
+                cv::Rect2f bounds(minX, minY, maxX - minX, maxY - minY);
+                bool safe = std::max(bounds.width * rgba.cols, bounds.height * rgba.rows) <=
+                    std::min(rgba.cols, rgba.rows) * 0.30f;
+                QRRegion candidate{bounds, readable && safe};
+                anyVerified |= candidate.verified;
+                auto existing = std::find_if(regions.begin(), regions.end(), [&](const QRRegion &r) {
+                    return overlap(r.bounds, bounds) > 0.65f && overlap(bounds, r.bounds) > 0.65f;
+                });
+                if (existing == regions.end()) regions.push_back(candidate);
+                else if (!existing->verified && candidate.verified) *existing = candidate;
+            }
+        }
+        return anyVerified;
+    };
+    if (!collect(gray)) {
+        cv::createCLAHE(2.0, cv::Size(8, 8))->apply(gray, enhanced);
+        if (!collect(enhanced)) {
+            cv::bitwise_not(gray, enhanced);
+            if (!collect(enhanced)) {
+                cv::adaptiveThreshold(gray, enhanced, 255, cv::ADAPTIVE_THRESH_GAUSSIAN_C,
+                                      cv::THRESH_BINARY, 31, 5);
+                collect(enhanced);
+            }
+        }
+    }
+}
+
+static std::vector<int> tileStarts(int length) {
+    if (length <= 1280) return {0};
+    std::vector<int> starts;
+    for (int start = 0; start <= length - 1280; start += 1024) starts.push_back(start);
+    if (starts.back() != length - 1280) starts.push_back(length - 1280);
+    return starts;
+}
+
 static cv::Mat rgbaImage(UIImage *image) {
     cv::Mat rgba;
     UIImageToMat(image, rgba, true);
@@ -25,6 +143,33 @@ static UIImage *repairedImage(cv::Mat &rgba, const cv::Rect &roi,
 }
 
 @implementation FreeScanOpenCV
++ (NSArray<FreeScanQRCodeCandidate *> *)qrCandidates:(UIImage *)image {
+    NSMutableArray<FreeScanQRCodeCandidate *> *output = [NSMutableArray array];
+    try {
+        cv::Mat rgba = rgbaImage(image);
+        if (rgba.empty()) return output;
+        std::vector<cv::GraphicalCodeDetector> detectors{cv::QRCodeDetector(), cv::QRCodeDetectorAruco()};
+        std::vector<QRRegion> regions;
+        auto detect = [&](cv::Rect roi) {
+            try { detectQRView(rgba, roi, detectors, regions); }
+            catch (const cv::Exception &error) { NSLog(@"FreeScan QR view failed: %s", error.what()); }
+        };
+        detect(cv::Rect(0, 0, rgba.cols, rgba.rows));
+        if (std::max(rgba.cols, rgba.rows) > 1280) {
+            for (int top : tileStarts(rgba.rows)) for (int left : tileStarts(rgba.cols)) {
+                detect(cv::Rect(left, top, std::min(1280, rgba.cols - left), std::min(1280, rgba.rows - top)));
+            }
+        }
+        for (const auto &r : regions) {
+            [output addObject:[[FreeScanQRCodeCandidate alloc]
+                initWithBounds:CGRectMake(r.bounds.x, r.bounds.y, r.bounds.width, r.bounds.height)
+                verified:r.verified]];
+        }
+    } catch (const std::exception &error) {
+        NSLog(@"FreeScan QR detection failed: %s", error.what());
+    }
+    return output;
+}
 + (UIImage *)removeColoredInk:(UIImage *)image {
     try {
         cv::Mat rgba = rgbaImage(image), rgb, hsv, mask;
