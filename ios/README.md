@@ -18,7 +18,7 @@ Image-based PDF editing rasterizes imported pages before editing. QR repair uses
 
 ## Platform mapping
 
-The iOS implementation uses Apple Vision, Core Image, AVFoundation, PDFKit, PhotosUI, and UIKit. It is a native port of the user-facing workflows; it uses an iOS OpenCV 4.12.0 framework and does not reuse Android LiteRT/Tesseract binaries. OCR uses the on-device Vision recognizer instead of downloadable Tesseract language packs. PDF pages are rasterized for editing, so selectable text and original vector content are not preserved in an edited export. The automatic Quark compatibility check covers the blue footer heuristic and QR codes; it is not a byte-for-byte port of the Android multi-detector pipeline.
+The iOS implementation uses Apple Vision, Core Image, AVFoundation, PDFKit, PhotosUI, UIKit and OpenCV 4.12.0. QR detection now uses the same standard/Aruco detectors, preprocessing passes, overview/tiles, geometric checks, decode verification and size guard as Android. The Quark blue-footer compatibility path is retained. QR region repair still uses rectangular interpolation; Android's polygon clipping and paper-plane background model remain to be ported. OCR uses the on-device Vision recognizer instead of downloadable Tesseract language packs. PDF pages are rasterized for editing, so original vectors are not retained; scanner exports can add a new searchable OCR text layer.
 
 ## Device IPA build
 

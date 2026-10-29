@@ -1090,6 +1090,7 @@ struct WatermarkToolView: View {
     @State private var showManualRepair = false
     @State private var showReview = false
     @State private var errorText: String?
+    @State private var isRepairing = false
     @AppStorage("exportFormat") private var exportFormat = "PDF"
     private var image: UIImage? { images.indices.contains(selectedIndex) ? images[selectedIndex] : nil }
 
@@ -1127,11 +1128,13 @@ struct WatermarkToolView: View {
                     }.buttonStyle(.bordered)
                 }
             }
+            if isRepairing { ProgressView("正在逐页检测并修复二维码…") }
             if let message { Text(message).font(.caption).foregroundStyle(.secondary) }
             Spacer()
         }
         .padding()
         .navigationTitle("二维码/水印")
+        .disabled(isRepairing)
         .onChange(of: item) { _, value in
             guard let value else { return }
             Task {
@@ -1183,13 +1186,23 @@ struct WatermarkToolView: View {
     }
 
     private func repairQRs() {
-        var repaired = 0
-        images = images.map { page in
-            let regions = ImagePipeline.qrRectangles(in: page)
-            repaired += regions.count
-            return regions.isEmpty ? page : ImagePipeline.repair(page, regions: regions)
+        guard !isRepairing, !images.isEmpty else { return }
+        let snapshot = images
+        isRepairing = true
+        Task {
+            let result = await Task.detached(priority: .userInitiated) {
+                var repaired = 0
+                let output = snapshot.map { page in
+                    let regions = ImagePipeline.qrRectangles(in: page)
+                    repaired += regions.count
+                    return regions.isEmpty ? page : ImagePipeline.repair(page, regions: regions)
+                }
+                return (output, repaired)
+            }.value
+            images = result.0
+            message = result.1 == 0 ? "没有检测到 QR 码，可改用手动框选。" : "已在 \(images.count) 页中修复 \(result.1) 个 QR 区域。"
+            isRepairing = false
         }
-        message = repaired == 0 ? "没有检测到 QR 码，可改用手动框选。" : "已在 \(images.count) 页中修复 \(repaired) 个 QR 区域。"
     }
 
     private func exportPDF() {
