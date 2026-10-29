@@ -19,6 +19,8 @@ int main() {
             cv::Mat page=linesAt(angle);
             double applied=0;
             cv::Mat result=freescan::deskewText(page,applied);
+            std::cout<<"fixture="<<angle<<" detected="<<applied
+                     <<" residual="<<freescan::textLineAngle(result)<<std::endl;
             require(std::abs(applied-angle)<.25,"Hough angle does not match fixture");
             require(std::abs(freescan::textLineAngle(result))<.35,"Deskew increased or retained the line slope");
             require(result.size()==page.size(),"Deskew changed page size");
