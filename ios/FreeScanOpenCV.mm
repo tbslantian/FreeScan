@@ -6,8 +6,16 @@
 #import <opencv2/imgcodecs/ios.h>
 #import "FreeScanOpenCV.h"
 #include "QRRepairCore.hpp"
+#include "DeskewCore.hpp"
 #include <algorithm>
 #include <cmath>
+
+@implementation FreeScanDeskewResult
+- (instancetype)initWithImage:(UIImage *)image angle:(double)angle {
+    if ((self=[super init])) { _image=image; _angle=angle; }
+    return self;
+}
+@end
 
 @implementation FreeScanQRCodeCandidate
 - (instancetype)initWithCorners:(NSArray<NSValue *> *)corners verified:(BOOL)verified {
@@ -155,6 +163,17 @@ static UIImage *repairedImage(cv::Mat &rgba, const cv::Rect &roi,
 }
 
 @implementation FreeScanOpenCV
++ (FreeScanDeskewResult *)deskewText:(UIImage *)image {
+    try {
+        cv::Mat rgba=rgbaImage(image);
+        if (rgba.empty()) return nil;
+        double angle=0;
+        cv::Mat output=freescan::deskewText(rgba,angle);
+        return [[FreeScanDeskewResult alloc] initWithImage:angle==0?image:MatToUIImage(output) angle:angle];
+    } catch (const std::exception &error) {
+        NSLog(@"FreeScan text deskew failed: %s",error.what());return nil;
+    }
+}
 + (NSArray<FreeScanQRCodeCandidate *> *)qrCandidates:(UIImage *)image {
     NSMutableArray<FreeScanQRCodeCandidate *> *output = [NSMutableArray array];
     try {

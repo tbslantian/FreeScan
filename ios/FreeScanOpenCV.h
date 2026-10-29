@@ -3,6 +3,12 @@
 #import <UIKit/UIKit.h>
 
 NS_ASSUME_NONNULL_BEGIN
+@interface FreeScanDeskewResult : NSObject
+@property(nonatomic, readonly, strong) UIImage *image;
+@property(nonatomic, readonly) double angle;
+- (instancetype)initWithImage:(UIImage *)image angle:(double)angle;
+@end
+
 @interface FreeScanQRCodeCandidate : NSObject
 @property(nonatomic, readonly) CGRect bounds;
 @property(nonatomic, readonly) BOOL verified;
@@ -11,6 +17,7 @@ NS_ASSUME_NONNULL_BEGIN
 @end
 
 @interface FreeScanOpenCV : NSObject
++ (nullable FreeScanDeskewResult *)deskewText:(UIImage *)image NS_SWIFT_NAME(deskewText(_:));
 + (NSArray<FreeScanQRCodeCandidate *> *)qrCandidates:(UIImage *)image NS_SWIFT_NAME(qrCandidates(_:));
 + (nullable UIImage *)repairRegions:(UIImage *)image
                             corners:(NSArray<NSArray<NSValue *> *> *)corners

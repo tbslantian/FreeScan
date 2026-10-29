@@ -44,18 +44,20 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             build
 
-      - name: Check polygon repair against synthetic documents
+      - name: Check native image processing against synthetic documents
         shell: bash
         run: |
           set -euo pipefail
           framework=$(find "$RUNNER_TEMP/FreeScanDerivedData/SourcePackages/artifacts" -type d -path '*/macos-*/opencv2.framework' -print -quit)
           test -n "$framework"
-          xcrun clang++ -std=c++17 ios/tests/QRRepairCoreTests.cpp \
-            -F "$(dirname "$framework")" -framework opencv2 \
-            -framework Accelerate -framework AVFoundation -framework CoreImage \
-            -framework CoreMedia -framework CoreVideo -framework OpenCL \
-            -o "$RUNNER_TEMP/QRRepairCoreTests"
-          "$RUNNER_TEMP/QRRepairCoreTests"
+          for native_test in QRRepairCoreTests DeskewCoreTests; do
+            xcrun clang++ -std=c++17 "ios/tests/$native_test.cpp" \
+              -F "$(dirname "$framework")" -framework opencv2 \
+              -framework Accelerate -framework AVFoundation -framework CoreImage \
+              -framework CoreMedia -framework CoreVideo -framework OpenCL \
+              -o "$RUNNER_TEMP/$native_test"
+            "$RUNNER_TEMP/$native_test"
+          done
 
       - name: Validate Apple signing secrets
         shell: bash

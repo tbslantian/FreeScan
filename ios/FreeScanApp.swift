@@ -81,12 +81,13 @@ struct HomeView: View {
                     let autoCrop = UserDefaults.standard.object(forKey: "autoCropEnabled") as? Bool ?? true
                     let resolution = CameraResolutionPreset(
                         rawValue: UserDefaults.standard.string(forKey: "scanResolution") ?? "4K") ?? .fourK
+                    let selectedFilter = ScanFilter(rawValue: UserDefaults.standard.string(forKey: "defaultFilter") ?? "") ?? .automatic
                     for item in items {
                         guard let data = try? await item.loadTransferable(type: Data.self),
                               let image = UIImage(data: data) else { continue }
                         let processed = await Task.detached(priority: .userInitiated) {
-                            let cropped = autoCrop ? ImagePipeline.autoCropDocument(image) : image
-                            return ImagePipeline.resize(cropped, maxDimension: resolution.maxDimension)
+                            ImagePipeline.prepareScan(image, autoCrop: autoCrop,
+                                                      maxDimension: resolution.maxDimension, filter: selectedFilter)
                         }.value
                         library.add(processed)
                     }
@@ -281,9 +282,9 @@ struct ScanCameraView: View {
     private func appendScannedImage(_ image: UIImage) async {
         let shouldCrop = autoCropEnabled
         let maxDimension = camera.resolution.maxDimension
+        let selectedFilter = ScanFilter(rawValue: UserDefaults.standard.string(forKey: "defaultFilter") ?? "") ?? .automatic
         let processed = await Task.detached(priority: .userInitiated) {
-            let cropped = shouldCrop ? ImagePipeline.autoCropDocument(image) : image
-            return ImagePipeline.resize(cropped, maxDimension: maxDimension)
+            ImagePipeline.prepareScan(image, autoCrop: shouldCrop, maxDimension: maxDimension, filter: selectedFilter)
         }.value
         library.add(processed)
         if mode == .certificate { isBackSide.toggle() }
@@ -411,6 +412,8 @@ struct ScanEditorView: View {
     @State private var shareFile: ShareFile?
     @State private var errorText: String?
     @State private var exportFilename = ""
+    @State private var isDeskewing = false
+    @State private var deskewMessage: String?
     @AppStorage("defaultFilter") private var defaultFilterRaw = ScanFilter.color.rawValue
     @AppStorage("removeShadowsEnabled") private var removeShadowsEnabled = true
     @AppStorage("exportFormat") private var exportFormat = "PDF"
@@ -481,6 +484,11 @@ struct ScanEditorView: View {
                             Spacer()
                             Button { Task { await runOCR(current) } } label: { Label("OCR", systemImage: "text.viewfinder") }
                         }.buttonStyle(.bordered).padding(.horizontal)
+                        Button { deskew(current) } label: {
+                            if isDeskewing { ProgressView("正在校正文字行…") }
+                            else { Label("文字行倾斜校正", systemImage: "text.alignleft") }
+                        }.buttonStyle(.bordered).padding(.horizontal)
+                        if let deskewMessage { Text(deskewMessage).font(.caption).foregroundStyle(.secondary) }
                         HStack {
                             TextField("导出文件名（不含扩展名）", text: $exportFilename)
                                 .textFieldStyle(.roundedBorder)
@@ -498,6 +506,7 @@ struct ScanEditorView: View {
                 }
             }
             .navigationTitle("页面编辑").navigationBarTitleDisplayMode(.inline)
+            .disabled(isDeskewing)
             .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("清空") { library.clear(); selectedID = nil } } }
             .onAppear {
                 filter = current?.filter ?? ScanFilter(rawValue: defaultFilterRaw) ?? .automatic
@@ -554,6 +563,27 @@ struct ScanEditorView: View {
     }
     private func rotate(_ page: ScanPage) {
         library.update(page.id) { $0.image = ImagePipeline.rotated($0.image, clockwiseDegrees: 90); $0.original = $0.image }
+    }
+    private func deskew(_ page: ScanPage) {
+        guard !isDeskewing else { return }
+        isDeskewing = true
+        deskewMessage = nil
+        Task {
+            do {
+                let result = try await Task.detached(priority: .userInitiated) {
+                    try ImagePipeline.deskewText(page.image)
+                }.value
+                if result.angle != 0 {
+                    library.update(page.id) {
+                        $0.image = result.image; $0.original = result.image; $0.recognizedText = nil
+                    }
+                    deskewMessage = String(format: "已校正 %.2f° 的文字行倾斜", abs(result.angle))
+                } else {
+                    deskewMessage = "未检测到可安全校正的小角度倾斜，保留原图。"
+                }
+            } catch { errorText = error.localizedDescription }
+            isDeskewing = false
+        }
     }
     private func runOCR(_ page: ScanPage) async {
         do {

@@ -237,6 +237,24 @@ enum ImagePipeline {
         }
     }
 
+    /// Shared capture/import path. Original mode and disabled auto-crop retain
+    /// their uncorrected geometry, matching Android's deskew opt-out behavior.
+    static func prepareScan(_ image: UIImage, autoCrop: Bool, maxDimension: Int,
+                            filter: ScanFilter) -> UIImage {
+        let cropped = autoCrop ? autoCropDocument(image) : upright(image)
+        let sized = resize(cropped, maxDimension: maxDimension)
+        guard autoCrop, filter != .original else { return sized }
+        return (try? deskewText(sized).image) ?? sized
+    }
+
+    static func deskewText(_ image: UIImage) throws -> (image: UIImage, angle: Double) {
+        guard let result = FreeScanOpenCV.deskewText(upright(image)) else {
+            throw NSError(domain: "FreeScan.Deskew", code: 1,
+                          userInfo: [NSLocalizedDescriptionKey: "无法完成文字行校正，请换一张图片后重试。"])
+        }
+        return (result.image, result.angle)
+    }
+
     /// Caps the captured image's longest pixel edge to the selected scan size.
     static func resize(_ image: UIImage, maxDimension: Int) -> UIImage {
         let normalized = upright(image)
