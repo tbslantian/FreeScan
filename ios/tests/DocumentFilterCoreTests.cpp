@@ -20,7 +20,8 @@ int main() {
         cv::meanStdDev(page(cv::Rect(64,60,384,40)),beforeMean,beforeStd);
         cv::meanStdDev(flattened(cv::Rect(64,60,384,40)),afterMean,afterStd);
         require(afterStd[0]<beforeStd[0]*.5,"Shadow correction did not flatten paper illumination");
-        require(flattened.at<cv::Vec3b>(270,100)[0]<150,"Shadow correction destroyed dark text");
+        cv::Mat inkMask;cv::inRange(original,cv::Scalar(0,0,0),cv::Scalar(40,40,40),inkMask);
+        require(cv::countNonZero(inkMask)>100 && cv::mean(flattened,inkMask)[0]<80,"Shadow correction destroyed dark text");
         auto gray=freescan::documentFilter(page,1,true);
         require(gray.type()==CV_8UC1 && gray.size()==page.size(),"Grayscale type or size changed");
         cv::Mat blank(300,300,CV_8UC3,cv::Scalar(246,246,246));

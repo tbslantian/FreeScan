@@ -519,13 +519,16 @@ struct ScanEditorView: View {
                 library.update(current.id) { $0.filter = selectedFilter }
             }
             .task(id: previewTaskID) {
+                let requestID = previewTaskID
                 guard let current else { previewImage = nil; return }
+                previewImage = nil
                 let source = current.image
                 let selectedFilter = filter
                 let shouldRemoveShadows = removeShadowsEnabled
                 let result = await Task.detached(priority: .userInitiated) {
                     ImagePipeline.filtered(source, mode: selectedFilter, removeShadows: shouldRemoveShadows)
                 }.value
+                guard !Task.isCancelled, requestID == previewTaskID else { return }
                 previewImage = result
             }
             .sheet(isPresented: $showCrop) { if let current { ManualCropView(page: current) } }
