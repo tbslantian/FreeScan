@@ -26,6 +26,9 @@ int main() {
         require(gray.type()==CV_8UC1 && gray.size()==page.size(),"Grayscale type or size changed");
         cv::Mat blank(300,300,CV_8UC3,cv::Scalar(246,246,246));
         require(cv::mean(freescan::documentFilter(blank,1,false))[0]>=240,"Flat blank paper turned black");
+        cv::Mat dimBlank(300,300,CV_8UC3,cv::Scalar(140,140,140));
+        require(cv::countNonZero(freescan::documentFilter(dimBlank,2,false))==dimBlank.rows*dimBlank.cols,
+                "Uniform dim paper became black in bitonal mode");
         cv::Mat exam(900,640,CV_8UC3,cv::Scalar(238,238,238));
         cv::putText(exam,"Printed text",cv::Point(80,180),cv::FONT_HERSHEY_SIMPLEX,1.4,cv::Scalar(8,8,8),3);
         cv::rectangle(exam,cv::Rect(100,320,400,160),cv::Scalar(10,10,10),-1);

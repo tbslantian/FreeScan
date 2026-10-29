@@ -108,23 +108,40 @@ inline void removeLightSpecks(cv::Mat &binary,int minArea,const cv::Mat &within=
         cv::Mat mask;cv::compare(labels(box),i,mask,cv::CMP_EQ);binary(box).setTo(0,mask);
     }
 }
+inline cv::Mat flatFill(const cv::Mat &source,int window) {
+    cv::Mat dark,seeds,fill;cv::compare(source,155,dark,cv::CMP_LT);
+    auto local=deviation(source,9);cv::compare(local,12,seeds,cv::CMP_LT);
+    cv::bitwise_and(seeds,dark,seeds);int reach=std::max(3,window/2);
+    cv::dilate(seeds,fill,cv::getStructuringElement(cv::MORPH_RECT,cv::Size(reach,reach)));
+    cv::bitwise_and(fill,dark,fill);return fill;
+}
 inline cv::Mat binaryDocument(const cv::Mat &input) {
+    cv::Mat originalGray;
+    if (input.channels()==1) originalGray=input;else cv::cvtColor(input,originalGray,cv::COLOR_BGR2GRAY);
+    double minimum=0,maximum=0;cv::minMaxLoc(originalGray,&minimum,&maximum);
+    // A constant field has no text/background contrast to threshold locally.
+    if (maximum-minimum<1) return cv::Mat(input.size(),CV_8UC1,cv::Scalar(maximum>=128?255:0));
     auto gray=flattenedGray(input);int maxDim=std::max(gray.cols,gray.rows),window=std::clamp(maxDim/10,15,1001)|1;
+    cv::Mat originalFill;
+    if (histogramPercentile(originalGray,.85)>=190) {
+        cv::Mat originalFloat;originalGray.convertTo(originalFloat,CV_32F);
+        originalFill=flatFill(originalFloat,window);
+    }
     cv::Mat source,mean,threshold,binary;gray.convertTo(source,CV_32F);gray.release();
     cv::boxFilter(source,mean,CV_32F,cv::Size(window,window));threshold=deviation(source,window);
     cv::multiply(threshold,cv::Scalar(.25/128),threshold);cv::add(threshold,cv::Scalar(.75),threshold);
     cv::multiply(mean,threshold,threshold);cv::compare(source,threshold,binary,cv::CMP_GT);
     mean.release();threshold.release();
-    cv::Mat dark,seeds,fill;cv::compare(source,155,dark,cv::CMP_LT);
-    auto local=deviation(source,9);cv::compare(local,12,seeds,cv::CMP_LT);local.release();source.release();
-    cv::bitwise_and(seeds,dark,seeds);int reach=std::max(3,window/2);
-    cv::dilate(seeds,fill,cv::getStructuringElement(cv::MORPH_RECT,cv::Size(reach,reach)));
-    cv::bitwise_and(fill,dark,fill);cv::subtract(binary,fill,binary);
+    auto fill=flatFill(source,window);source.release();
+    // Retinex may whiten the centre of a wide dark box. Keep the original
+    // smooth dark fill when a bright paper reference exists around it.
+    if (!originalFill.empty()) cv::bitwise_or(fill,originalFill,fill);
+    cv::subtract(binary,fill,binary);
     int area=std::max(2,int(std::round(12*std::pow(maxDim/3508.,2))));
     auto letters=binary.clone();removeLightSpecks(letters,area*4);
     cv::Mat near,inside,lonely;int gap=std::max(3,cvRound(8*std::sqrt(area)));
     cv::dilate(letters,near,cv::getStructuringElement(cv::MORPH_RECT,cv::Size(gap,gap)));
-    reach=std::max(3,window/4);cv::dilate(fill,inside,cv::getStructuringElement(cv::MORPH_RECT,cv::Size(reach,reach)));
+    int reach=std::max(3,window/4);cv::dilate(fill,inside,cv::getStructuringElement(cv::MORPH_RECT,cv::Size(reach,reach)));
     cv::bitwise_not(near,lonely);cv::bitwise_and(inside,lonely,inside);removeLightSpecks(binary,area*5,inside);
     return binary;
 }
