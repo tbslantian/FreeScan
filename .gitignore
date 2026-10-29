@@ -12,6 +12,7 @@
 /.idea/deviceManager.xml
 /.idea/deploymentTargetSelector.xml
 .DS_Store
+/ios/.build/
 /build
 /captures
 .externalNativeBuild

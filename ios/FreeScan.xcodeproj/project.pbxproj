@@ -148,6 +148,9 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
                 CLANG_CXX_LANGUAGE_STANDARD = "c++17";
+                HEADER_SEARCH_PATHS = ("$(inherited)", "$(SRCROOT)/.build/ocr-device/include",);
+                LIBRARY_SEARCH_PATHS = ("$(inherited)", "$(SRCROOT)/.build/ocr-device/lib",);
+                OTHER_LDFLAGS = ("$(inherited)", "-ltesseract", "-lleptonica", "-lc++",);
                 SWIFT_OBJC_BRIDGING_HEADER = "FreeScan-Bridging-Header.h";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
@@ -181,6 +184,9 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
                 CLANG_CXX_LANGUAGE_STANDARD = "c++17";
+                HEADER_SEARCH_PATHS = ("$(inherited)", "$(SRCROOT)/.build/ocr-device/include",);
+                LIBRARY_SEARCH_PATHS = ("$(inherited)", "$(SRCROOT)/.build/ocr-device/lib",);
+                OTHER_LDFLAGS = ("$(inherited)", "-ltesseract", "-lleptonica", "-lc++",);
                 SWIFT_OBJC_BRIDGING_HEADER = "FreeScan-Bridging-Header.h";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
