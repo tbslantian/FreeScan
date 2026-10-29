@@ -1,6 +1,5 @@
 /* Copyright 2025-2026 The FairScan authors
  * SPDX-License-Identifier: GPL-3.0-or-later */
-import CryptoKit
 import Foundation
 import SwiftUI
 import UIKit
@@ -110,11 +109,7 @@ final class OCRLanguageStore: ObservableObject {
                 }
                 do {
                     let data = try result.get()
-                    guard data.count == model.size else { throw LocalOCRError.message("语言包大小校验失败，请重试。") }
-                    var hash = Insecure.SHA1()
-                    hash.update(data: Data("blob \(data.count)\0".utf8)); hash.update(data: data)
-                    let digest = hash.finalize().map { String(format: "%02x", $0) }.joined()
-                    guard digest == model.gitBlob else { throw LocalOCRError.message("语言包内容校验失败，请重试。") }
+                    try OCRModelIntegrity.validate(data, expectedSize: model.size, gitBlob: model.gitBlob)
                     try FileManager.default.createDirectory(at: self.directory, withIntermediateDirectories: true)
                     try data.write(to: self.directory.appendingPathComponent(model.code + ".traineddata"), options: .atomic)
                     self.enabled.insert(model.code); self.refresh()
