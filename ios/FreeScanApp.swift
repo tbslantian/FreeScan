@@ -4,6 +4,7 @@
  */
 
 import AVFoundation
+import AVKit
 import PhotosUI
 import PDFKit
 import SwiftUI
@@ -245,6 +246,10 @@ struct ScanCameraView: View {
             }
             .toolbarBackground(.black.opacity(0.72), for: .navigationBar).toolbarBackground(.visible, for: .navigationBar)
             .onAppear { camera.start() }.onDisappear { camera.stop() }
+            .cameraShutterEvents(isEnabled: camera.isReady && capturedPreview == nil) {
+                guard capturedPreview == nil else { return }
+                camera.capture()
+            }
             .onChange(of: camera.capturedImage) { _, image in
                 guard let image else { return }
                 capturedPreview = image
@@ -1202,8 +1207,8 @@ private struct WatermarkReviewView: View {
                                     .position(x: rect.midX, y: rect.midY)
                             }
                             if let start = dragStart, let end = dragEnd {
-                                let rect = CGRect(x: min(start.x, end.x), y: min(start.y, end.y),
-                                                  width: abs(end.x - start.x), height: abs(end.y - start.y))
+                                let rect = screenRect(CGRect(x: min(start.x, end.x), y: min(start.y, end.y),
+                                                  width: abs(end.x - start.x), height: abs(end.y - start.y)), in: fitted)
                                 RoundedRectangle(cornerRadius: 3)
                                     .stroke(Color.blue, style: StrokeStyle(lineWidth: 2, dash: [5, 3]))
                                     .frame(width: max(2, rect.width), height: max(2, rect.height))
@@ -1342,7 +1347,22 @@ private struct WatermarkReviewView: View {
 }
 
 private extension CGFloat {
-    func clamped(to range: ClosedRange<CGFloat>) -> CGFloat { min(max(self, range.lowerBound), range.upperBound) }
+    func clamped(to range: ClosedRange<CGFloat>) -> CGFloat {
+        Swift.min(Swift.max(self, range.lowerBound), range.upperBound)
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func cameraShutterEvents(isEnabled: Bool, action: @escaping () -> Void) -> some View {
+        if #available(iOS 17.2, *) {
+            self.onCameraCaptureEvent(isEnabled: isEnabled) { event in
+                if event.phase == .ended { action() }
+            }
+        } else {
+            self
+        }
+    }
 }
 
 struct HandwritingToolView: View {

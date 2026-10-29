@@ -17,7 +17,7 @@ Status is based on the current Android screens and services under `app/src/main/
 - [x] Camera: throttled Vision rectangle detection, a smoothed four-corner perspective outline, 1080p/2K/4K output sizing, flash modes, and torch control.
 - [x] Camera: optional three-frame capture that retains the sharpest frame.
 - [x] Camera: match Android's three-consecutive-frame quad stabilizer and its 20 px movement threshold on a 640×480 reference preview.
-- [ ] Camera: hardware volume-key shutter; the on-screen shutter remains available on iOS.
+- [x] Camera: use Apple's camera capture events for hardware volume-key shutter on iOS 17.2 and later, only while capture is ready and no captured-photo review is visible. iOS 17.0/17.1 retain the on-screen shutter.
 - [x] Editor: draggable four-corner perspective crop instead of only rectangular edge sliders.
 - [x] Camera workflow: capture review/retake, continuous multi-page capture, and multiple-photo import in one operation.
 - [x] Certificate scanner: nine template names, template-specific live preview aspect ratios, and matching document-field guide drawings.
