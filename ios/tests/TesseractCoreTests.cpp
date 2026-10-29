@@ -6,7 +6,7 @@
 static void require(bool value,const char *message) {if (!value) throw std::runtime_error(message);}
 int main(int argc,char **argv) {
     try {
-        require(argc==2,"Missing test tessdata directory");
+        require(argc==3,"Missing test tessdata directory or bilingual image");
         cv::Mat image(240,1100,CV_8UC4,cv::Scalar(255,255,255,255));
         cv::putText(image,"FreeScan 12345",cv::Point(60,145),cv::FONT_HERSHEY_SIMPLEX,2.4,cv::Scalar(0,0,0,255),3,cv::LINE_AA);
         auto result=freescan::recognizeDocument(image,argv[1],"eng");
@@ -24,6 +24,14 @@ int main(int argc,char **argv) {
         bool rejected=false;
         try {freescan::recognizeDocument(image,argv[1],"missing_language");} catch (const std::runtime_error &) {rejected=true;}
         require(rejected,"Missing model must report initialization failure");
+        auto bilingualBGR=cv::imread(argv[2]);cv::Mat bilingualImage;
+        require(!bilingualBGR.empty(),"Bilingual test image missing");
+        cv::cvtColor(bilingualBGR,bilingualImage,cv::COLOR_BGR2RGBA);
+        auto bilingual=freescan::recognizeDocument(bilingualImage,argv[1],"chi_sim+eng");
+        std::cout<<"Synthetic bilingual OCR: "<<bilingual.text<<std::endl;
+        require(bilingual.text.find(u8"扫描")!=std::string::npos && bilingual.text.find("12345")!=std::string::npos,
+                "Chinese/English multi-language recognition failed");
+        require(!bilingual.words.empty(),"Bilingual word boxes missing");
         std::cout<<"All Tesseract OCR regression checks passed\n";
         return 0;
     } catch (const std::exception &error) {std::cerr<<error.what()<<'\n';return 1;}

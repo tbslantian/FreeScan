@@ -94,14 +94,15 @@ jobs:
           assert len(catalog["models"]) == 120, "Language catalog was not delivered in the app"
           for name in ("Tesseract-LICENSE.txt", "Leptonica-LICENSE.txt"):
               assert (app / name).is_file(), f"Missing bundled license: {name}"
-          model = next(m for m in catalog["models"] if m["code"] == "eng")
-          url = f'https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/{catalog["revision"]}/eng.traineddata'
-          data = urllib.request.urlopen(url, timeout=120).read()
-          assert len(data) == model["size"], "Model size mismatch"
-          assert hashlib.sha1(f"blob {len(data)}\0".encode() + data).hexdigest() == model["gitBlob"], "Model content mismatch"
           path = pathlib.Path("ios/.build/ocr-test-data")
           path.mkdir(parents=True, exist_ok=True)
-          (path / "eng.traineddata").write_bytes(data)
+          for code in ("eng", "chi_sim"):
+              model = next(m for m in catalog["models"] if m["code"] == code)
+              url = f'https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/{catalog["revision"]}/{code}.traineddata'
+              data = urllib.request.urlopen(url, timeout=120).read()
+              assert len(data) == model["size"], "Model size mismatch"
+              assert hashlib.sha1(f"blob {len(data)}\0".encode() + data).hexdigest() == model["gitBlob"], "Model content mismatch"
+              (path / f"{code}.traineddata").write_bytes(data)
           PY
           framework=$(find "$RUNNER_TEMP/FreeScanDerivedData/SourcePackages/artifacts" -type d -path '*/macos-*/opencv2.framework' -print -quit)
           test -n "$framework"
@@ -111,7 +112,8 @@ jobs:
             -framework Accelerate -framework AVFoundation -framework CoreImage \
             -framework CoreMedia -framework CoreVideo -framework OpenCL -lz -liconv \
             -o "$RUNNER_TEMP/TesseractCoreTests"
-          "$RUNNER_TEMP/TesseractCoreTests" "$GITHUB_WORKSPACE/ios/.build/ocr-test-data"
+          swift ios/tests/RenderOCRFixture.swift "$RUNNER_TEMP/ocr-bilingual.png"
+          "$RUNNER_TEMP/TesseractCoreTests" "$GITHUB_WORKSPACE/ios/.build/ocr-test-data" "$RUNNER_TEMP/ocr-bilingual.png"
           swiftc ios/OCRModelIntegrity.swift ios/tests/OCRModelIntegrityChecks.swift -o "$RUNNER_TEMP/OCRModelIntegrityChecks"
           "$RUNNER_TEMP/OCRModelIntegrityChecks" ios/OCRLanguages.json ios/.build/ocr-test-data/eng.traineddata
 
