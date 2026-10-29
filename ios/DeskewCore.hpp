@@ -17,7 +17,9 @@ inline double textLineAngle(const cv::Mat &image) {
     int mx=int(std::round(image.cols*.08)),my=int(std::round(image.rows*.08));
     cv::Rect roi(mx,my,std::max(1,image.cols-mx*2),std::max(1,image.rows-my*2));
     std::vector<cv::Vec4i> lines;
-    cv::HoughLinesP(edges(roi),lines,1,CV_PI/180,std::max(20,image.cols/120),image.cols*.12,image.cols*.015);
+    // Android uses 1-degree bins. Refine to 0.2 degrees so small tilts are not
+    // rounded away before median estimation (validated with fractional slopes).
+    cv::HoughLinesP(edges(roi),lines,1,CV_PI/900,std::max(20,image.cols/120),image.cols*.12,image.cols*.015);
     std::vector<double> angles;
     for (const auto &l:lines) {
         double angle=std::atan2(double(l[3]-l[1]),double(l[2]-l[0]))*180/CV_PI;
