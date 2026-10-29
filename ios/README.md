@@ -1,6 +1,6 @@
 # FreeScan iOS
 
-This is the native SwiftUI companion project for the Android FreeScan app. It has no external package dependencies and targets iOS 17 or later.
+This is the native SwiftUI companion project for the Android FreeScan app. It targets iOS 17 or later and pins OpenCV 4.12.0 through `yeatse/opencv-spm` with a locked revision and binary checksum.
 
 ## Features
 
@@ -14,11 +14,11 @@ This is the native SwiftUI companion project for the Android FreeScan app. It ha
 - Camera document candidate outline, flash/torch controls, and 1080p/2K/4K scan output sizing.
 - Local settings for auto-crop, default filter, OCR language, export quality, and an optional Files export folder; exported files remain in the app library and are also copied to the selected folder.
 
-Image-based PDF editing rasterizes imported pages before editing. QR repair uses local border interpolation and works best on small marks over smooth backgrounds; it is not content-aware inpainting. Colored handwriting removal is a color heuristic and may affect colored print; manual repair is available for residual marks.
+Image-based PDF editing rasterizes imported pages before editing. QR repair uses local border interpolation and works best on small marks over smooth backgrounds; it is not content-aware inpainting. Colored-ink removal and manual brush repair now use OpenCV Telea with the same masks, crop padding and radius rules as Android. Color detection may affect colored print and does not identify black handwriting automatically.
 
 ## Platform mapping
 
-The iOS implementation uses Apple Vision, Core Image, AVFoundation, PDFKit, PhotosUI, and UIKit. It is a native port of the user-facing workflows; it does not reuse Android-only OpenCV/LiteRT/Tesseract binaries. OCR uses the on-device Vision recognizer instead of downloadable Tesseract language packs. PDF pages are rasterized for editing, so selectable text and original vector content are not preserved in an edited export. The automatic Quark compatibility check covers the blue footer heuristic and QR codes; it is not a byte-for-byte port of the Android multi-detector pipeline.
+The iOS implementation uses Apple Vision, Core Image, AVFoundation, PDFKit, PhotosUI, and UIKit. It is a native port of the user-facing workflows; it uses an iOS OpenCV 4.12.0 framework and does not reuse Android LiteRT/Tesseract binaries. OCR uses the on-device Vision recognizer instead of downloadable Tesseract language packs. PDF pages are rasterized for editing, so selectable text and original vector content are not preserved in an edited export. The automatic Quark compatibility check covers the blue footer heuristic and QR codes; it is not a byte-for-byte port of the Android multi-detector pipeline.
 
 ## Device IPA build
 
@@ -41,3 +41,5 @@ The iOS implementation is not yet at complete Android feature parity. See [ANDRO
 ## License
 
 GPL-3.0-or-later. See LICENSE.
+
+OpenCV is licensed under Apache-2.0; see [OpenCV-LICENSE.txt](OpenCV-LICENSE.txt). The license is bundled in the app.
