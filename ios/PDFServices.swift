@@ -127,15 +127,7 @@ enum PDFServices {
                 width: max(1, bounds.width * imageRect.width),
                 height: max(1, bounds.height * imageRect.height)
             )
-            let fontSize = max(4, min(72, textRect.height * 0.82))
-            let attributed = NSAttributedString(
-                string: line.text,
-                attributes: [
-                    .font: UIFont.systemFont(ofSize: fontSize),
-                    .foregroundColor: UIColor.black,
-                ]
-            )
-            attributed.draw(with: textRect, options: [.usesLineFragmentOrigin, .usesFontLeading], context: nil)
+            OCRPDFText.draw(line.text, in: textRect, context: context)
         }
         context.restoreGState()
     }

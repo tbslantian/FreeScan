@@ -116,6 +116,8 @@ jobs:
           "$RUNNER_TEMP/TesseractCoreTests" "$GITHUB_WORKSPACE/ios/.build/ocr-test-data" "$RUNNER_TEMP/ocr-bilingual.png"
           swiftc ios/OCRModelIntegrity.swift ios/tests/OCRModelIntegrityChecks.swift -o "$RUNNER_TEMP/OCRModelIntegrityChecks"
           "$RUNNER_TEMP/OCRModelIntegrityChecks" ios/OCRLanguages.json ios/.build/ocr-test-data/eng.traineddata
+          swiftc ios/OCRPDFText.swift ios/tests/OCRPDFTextChecks.swift -o "$RUNNER_TEMP/OCRPDFTextChecks"
+          "$RUNNER_TEMP/OCRPDFTextChecks"
 
       - name: Validate Apple signing secrets
         shell: bash
