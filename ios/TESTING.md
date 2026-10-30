@@ -2,6 +2,14 @@
 
 目标设备：iOS/iPadOS 17 或更高版本的 iPhone、iPad。测试包必须签名后才能安装；当前没有配置 Apple 签名资料，尚未生成可直接安装的签名 IPA。正式产物仍以 App Store Connect IPA 为目标。
 
+## 测试包与安装
+
+在 GitHub Actions 手动运行 `iOS IPA`，将 `delivery` 选择为 `unsigned-device-test`。构建成功后下载 `FreeScan-iOS-Unsigned-Device-Test-<构建号>`，解压 GitHub 提供的 ZIP，得到 `.ipa`、`READ-ME-FIRST.txt`、`BUILD-INFO.json` 和校验文件。
+
+这个包是未签名的真机测试包，不能直接点击安装。可以在个人电脑上通过本机签名工具使用自己的 Apple 账户签名侧载；Windows 的具体安装和开发者模式步骤可参阅 [AltStore Classic 官方指南](https://faq.altstore.io/altstore-classic/how-to-install-altstore-windows)。账户和密码只在自己电脑的签名工具中输入，不上传到 GitHub 或聊天中。免费个人账户的配置描述文件有有效期限制，需定期重新签名，见 [Apple 官方说明](https://developer.apple.com/help/account/basics/about-your-developer-account)。
+
+要生成 TestFlight/App Store 产物，选择 `app-store-connect` 并先配置 Apple 分发签名；该流程不会自动改发未签名包。
+
 ## 当前已知差异
 
 - “增强”“柔和增强”仍为 Core Image 近似实现，其余基础滤镜及亮度/增强灰度已移植对应处理路径。

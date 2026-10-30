@@ -7,13 +7,22 @@ on:
       - 'ios/**'
       - '.github/workflows/ios.yml'
   workflow_dispatch:
+    inputs:
+      delivery:
+        description: 'Delivery: unsigned-device-test requires local Apple signing before installation'
+        required: true
+        type: choice
+        default: app-store-connect
+        options:
+          - app-store-connect
+          - unsigned-device-test
 
 permissions:
   contents: read
 
 jobs:
   build:
-    name: Archive and export signed iPhone/iPad IPA
+    name: ${{ inputs.delivery == 'unsigned-device-test' && 'Build unsigned iPhone/iPad test IPA (local signing required)' || 'Archive and export signed iPhone/iPad IPA' }}
     runs-on: macos-15
     timeout-minutes: 45
     env:
@@ -66,6 +75,7 @@ jobs:
             -destination 'generic/platform=iOS' \
             -derivedDataPath "$RUNNER_TEMP/FreeScanDerivedData" \
             CODE_SIGNING_ALLOWED=NO \
+            CURRENT_PROJECT_VERSION="$GITHUB_RUN_NUMBER" \
             build
 
       - name: Check native image processing against synthetic documents
@@ -119,7 +129,34 @@ jobs:
           swiftc ios/OCRPDFText.swift ios/tests/OCRPDFTextChecks.swift -o "$RUNNER_TEMP/OCRPDFTextChecks"
           "$RUNNER_TEMP/OCRPDFTextChecks"
 
+      - name: Verify device-only package inputs
+        run: |
+          python3 -B -m unittest discover -s ios/tests -p test_device_package.py
+          python3 ios/package_device_test.py --verify-only "$RUNNER_TEMP/FreeScanDerivedData/Build/Products/Release-iphoneos/FreeScan.app"
+
+      - name: Package unsigned device-test IPA for local signing
+        if: github.event_name == 'workflow_dispatch' && inputs.delivery == 'unsigned-device-test'
+        run: |
+          python3 ios/package_device_test.py \
+            "$RUNNER_TEMP/FreeScanDerivedData/Build/Products/Release-iphoneos/FreeScan.app" \
+            "$RUNNER_TEMP/FreeScanDeviceTest"
+          {
+            echo '### Unsigned iPhone/iPad device-test package'
+            echo 'The IPA requires local Apple signing before installation. It cannot be installed directly or uploaded to TestFlight/App Store.'
+            echo 'See READ-ME-FIRST.txt, BUILD-INFO.json and TESTING.md in the artifact.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload unsigned device-test IPA and instructions
+        if: github.event_name == 'workflow_dispatch' && inputs.delivery == 'unsigned-device-test'
+        uses: actions/upload-artifact@v6
+        with:
+          name: FreeScan-iOS-Unsigned-Device-Test-${{ github.run_number }}
+          path: ${{ runner.temp }}/FreeScanDeviceTest/*
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Validate Apple signing secrets
+        if: inputs.delivery != 'unsigned-device-test'
         shell: bash
         run: |
           set -euo pipefail
@@ -131,6 +168,7 @@ jobs:
           done
 
       - name: Install Apple distribution signing assets
+        if: inputs.delivery != 'unsigned-device-test'
         shell: bash
         run: |
           set -euo pipefail
@@ -199,6 +237,7 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Archive for iPhone and iPad
+        if: inputs.delivery != 'unsigned-device-test'
         shell: bash
         run: |
           set -euo pipefail
@@ -218,6 +257,7 @@ jobs:
             archive
 
       - name: Export App Store Connect IPA
+        if: inputs.delivery != 'unsigned-device-test'
         shell: bash
         run: |
           set -euo pipefail
@@ -248,6 +288,7 @@ jobs:
           cp "$ipa" "$GITHUB_WORKSPACE/FreeScan-iOS-${GITHUB_RUN_NUMBER}.ipa"
 
       - name: Upload signed IPA
+        if: inputs.delivery != 'unsigned-device-test'
         uses: actions/upload-artifact@v6
         with:
           name: FreeScan-iOS-IPA
@@ -256,7 +297,7 @@ jobs:
           retention-days: 14
 
       - name: Remove signing assets
-        if: always()
+        if: always() && inputs.delivery != 'unsigned-device-test'
         shell: bash
         run: |
           security delete-keychain "$RUNNER_TEMP/freescan-signing.keychain-db" 2>/dev/null || true

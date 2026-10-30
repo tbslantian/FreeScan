@@ -26,6 +26,10 @@ GitHub Actions also runs native macOS regression checks of the shared processing
 
 ## Device IPA build
 
+For a device test package, manually run `iOS IPA` and select `delivery: unsigned-device-test`. The artifact is named `FreeScan-iOS-Unsigned-Device-Test-<build>` and contains an unsigned IPA, source/build metadata, a SHA-256 checksum and [device test instructions](TESTING.md). It is built for iPhone/iPad arm64 devices, not a simulator. It requires local Apple signing before installation and cannot be uploaded to TestFlight/App Store.
+
+Automatic pushes and the default manual selection continue to use `app-store-connect`. Missing Apple signing secrets fail this production path; they never trigger an unsigned fallback. Both paths compile the same Release app and run the native regression checks. Packaging also verifies the real Mach-O platform, architectures, both device families and OCR resources.
+
 The GitHub Actions workflow builds a signed iPhone/iPad archive and exports an App Store Connect IPA. It does not produce a simulator build. The Release target is universal for iPhone and iPad (`TARGETED_DEVICE_FAMILY = 1,2`).
 
 Configure these GitHub Actions repository secrets before running the `iOS IPA` workflow:
