@@ -17,6 +17,8 @@ Brightness compatibility details: the Android JNI path drops RGBA alpha with col
 
 Regression fixtures cover independently calculated tone-map values, constant black/mid-gray/white fields, RGB histogram compatibility, primary-color grayscale weights, neutral contrast preservation, source immutability, non-contiguous row strides and shadow-correction ordering. These checks validate the portable implementation against the recovered rules; they are not a runtime comparison with the original Android library. Device output comparison remains pending.
 
+An additional [Ghidra emulation script](EmulateLegacyBrightness.java) verifies the selected original ARM64 pixel worker's instructions. It checks the artifact SHA-256 and image base, models a single OpenMP worker and TLS canary, then checks four endpoint intervals, 9,216 channel samples and non-contiguous row padding. The observed run completed 307,624 emulated instructions with all samples matching. This covers the pixel worker, not the full histogram/JNI pipeline or an Android application run. On an already analyzed Ghidra project, run `EmulateLegacyBrightness.java` with one argument: the output report path.
+
 ## Remaining enhanced / soft paths
 
 `0x001dd3e0` JNI `EnhanceImg` calls implementation `0x001e3380` with a 600 px analysis size, softening 0 or 0.3, gamma 2.5, sharpening 1.5 and a final float parameter of approximately 0.95 (`0x0067df24`).
