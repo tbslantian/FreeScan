@@ -63,7 +63,7 @@ struct HomeView: View {
                             FeatureCardLabel(title: "PDF 编辑", subtitle: "导入、调整页面并导出", icon: "doc.richtext")
                         }.buttonStyle(.plain)
                         NavigationLink { ScanEditorView() } label: {
-                            FeatureCardLabel(title: "当前扫描", subtitle: "\(library.pages.count) 页 · 裁边、滤镜、OCR", icon: "square.stack.3d.up")
+                            FeatureCardLabel(title: "当前扫描", subtitle: "\(library.pages.count) 页 · 裁边、滤镜、导出", icon: "square.stack.3d.up")
                         }.buttonStyle(.plain)
                     }
                     Button { showPDFImporter = true } label: {
@@ -410,6 +410,8 @@ struct ScanEditorView: View {
     @State private var showOCR = false
     @State private var recognizedText = ""
     @State private var isRecognizing = false
+    @State private var exportProgress: String?
+    @State private var exportNotice: String?
     @State private var shareFile: ShareFile?
     @State private var errorText: String?
     @State private var exportFilename = ""
@@ -418,6 +420,7 @@ struct ScanEditorView: View {
     @AppStorage("defaultFilter") private var defaultFilterRaw = ScanFilter.color.rawValue
     @AppStorage("removeShadowsEnabled") private var removeShadowsEnabled = true
     @AppStorage("exportFormat") private var exportFormat = "PDF"
+    @AppStorage("ocrEnabled") private var ocrEnabled = false
     @State private var previewImage: UIImage?
     private var current: ScanPage? { library.pages.first(where: { $0.id == selectedID }) ?? library.pages.first }
     private var previewTaskID: String {
@@ -482,11 +485,6 @@ struct ScanEditorView: View {
                             Button { showCrop = true } label: { Label("手动裁边", systemImage: "crop.rotate") }
                             Spacer()
                             Button { rotate(current) } label: { Label("旋转", systemImage: "rotate.right") }
-                            Spacer()
-                            Button { Task { await runOCR(current) } } label: {
-                                if isRecognizing { ProgressView("识别中…") }
-                                else { Label("OCR", systemImage: "text.viewfinder") }
-                            }.disabled(isRecognizing)
                         }.buttonStyle(.bordered).padding(.horizontal)
                         Button { deskew(current) } label: {
                             if isDeskewing { ProgressView("正在校正文字行…") }
@@ -505,7 +503,23 @@ struct ScanEditorView: View {
                                 if exportFormat == "JPEG" { exportJPEG() } else { exportPDF() }
                             }.buttonStyle(.borderedProminent)
                             Button("打印") { printPDF() }.buttonStyle(.bordered)
-                        }.padding(.bottom, 8)
+                        }.disabled(exportProgress != nil || isRecognizing)
+                        if ocrEnabled {
+                            Menu {
+                                Button("识别本页文字") { Task { await runOCR(current) } }
+                                Button("生成可搜索 PDF") { exportPDF(searchable: true) }
+                            } label: {
+                                Label("文字识别（OCR）", systemImage: "text.viewfinder")
+                            }.disabled(exportProgress != nil || isRecognizing)
+                        }
+                        if let exportProgress {
+                            ProgressView(exportProgress).font(.caption)
+                        } else if isRecognizing {
+                            ProgressView("正在识别本页文字…").font(.caption)
+                        }
+                        if let exportNotice {
+                            Text(exportNotice).font(.caption).foregroundStyle(.secondary)
+                        }
                     }.padding(.top, 8)
                 }
             }
@@ -595,40 +609,61 @@ struct ScanEditorView: View {
         }
     }
     private func runOCR(_ page: ScanPage) async {
-        guard !isRecognizing else { return }
+        guard ocrEnabled, !isRecognizing, exportProgress == nil else { return }
         isRecognizing = true
         defer { isRecognizing = false }
         do {
             let language = UserDefaults.standard.string(forKey: "ocrLanguage") ?? "zh-Hans"
             let text = try await ImagePipeline.recognizeText(page.image, language: language)
-            guard current?.id == page.id else { return }
+            guard ocrEnabled, current?.id == page.id else { return }
             recognizedText = text
             showOCR = true
         } catch { errorText = error.localizedDescription }
     }
-    private func exportPDF() {
+    private func exportPDF(searchable: Bool = false) {
+        guard exportProgress == nil, !isRecognizing, !searchable || ocrEnabled else { return }
         let source = library.pages.map { ($0.image, $0.filter) }
         let shouldRemoveShadows = removeShadowsEnabled
-        let language = UserDefaults.standard.string(forKey: "ocrLanguage") ?? "zh-Hans"
         let filename = exportFilename.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : exportFilename
+        exportProgress = "正在生成 PDF…"
+        exportNotice = nil
         Task {
+            defer { exportProgress = nil }
             do {
+                if !searchable {
+                    let url = try await Task.detached(priority: .userInitiated) {
+                        try PDFServices.makePDF(pageCount: source.count, filename: filename) { index in
+                            let page = source[index]
+                            return ImagePipeline.filtered(page.0, mode: page.1, removeShadows: shouldRemoveShadows)
+                        }
+                    }.value
+                    shareFile = ShareFile(url: url)
+                    return
+                }
+                let language = UserDefaults.standard.string(forKey: "ocrLanguage") ?? "zh-Hans"
                 let processed = await Task.detached(priority: .userInitiated) {
                     source.map { page in
                         ImagePipeline.filtered(page.0, mode: page.1, removeShadows: shouldRemoveShadows)
                     }
                 }.value
                 var recognizedPages = [[RecognizedTextLine]]()
-                for image in processed {
+                var failedPages = 0
+                for (index, image) in processed.enumerated() {
+                    exportProgress = "正在识别第 \(index + 1) / \(processed.count) 页…"
                     do {
                         recognizedPages.append(try await ImagePipeline.recognizeTextLines(image, language: language))
                     } catch {
-                        NSLog("FreeScan export OCR failed for a page: %@", error.localizedDescription as NSString)
+                        failedPages += 1
                         recognizedPages.append([])
                     }
                 }
-                shareFile = ShareFile(url: try PDFServices.makePDF(
-                    from: processed, searchableText: recognizedPages, filename: filename))
+                exportProgress = "正在写入 PDF…"
+                let text = recognizedPages
+                let url = try await Task.detached(priority: .userInitiated) {
+                    try PDFServices.makePDF(from: processed, searchableText: text, filename: filename)
+                }.value
+                if failedPages > 0 { exportNotice = "\(failedPages) 页未能识别文字，已保留页面图像。" }
+                shareFile = ShareFile(url: url)
             } catch { errorText = error.localizedDescription }
         }
     }
@@ -1547,6 +1582,7 @@ struct SettingsView: View {
     @AppStorage("defaultFilter") private var defaultFilter = ScanFilter.automatic.rawValue
     @AppStorage("ocrLanguage") private var ocrLanguage = "zh-Hans"
     @AppStorage("ocrEngine") private var ocrEngine = "vision"
+    @AppStorage("ocrEnabled") private var ocrEnabled = false
     @AppStorage("exportQuality") private var exportQuality = 0.92
     @AppStorage("scanResolution") private var scanResolution = CameraResolutionPreset.fourK.rawValue
     @AppStorage("exportFormat") private var exportFormat = "PDF"
@@ -1591,6 +1627,9 @@ struct SettingsView: View {
                     }
                 }
                 Section("文字识别") {
+                    Toggle("启用文字识别（OCR）", isOn: $ocrEnabled)
+                    Text("开启后，在页面编辑中手动识别本页文字或生成可搜索 PDF。")
+                        .font(.caption).foregroundStyle(.secondary)
                     Picker("OCR 引擎", selection: $ocrEngine) {
                         Text("Apple Vision").tag("vision")
                         Text("Tesseract（本地语言包）").tag("tesseract")
