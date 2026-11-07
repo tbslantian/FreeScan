@@ -87,6 +87,7 @@ final class CameraCaptureModel: NSObject, ObservableObject, AVCapturePhotoCaptur
     private var framesRemaining = 0
     private var bestFrameScore = -Double.infinity
     private var bestFrame: UIImage?
+    @MainActor var captureRotationAngle: CGFloat = 90
 
     func start() {
         AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
@@ -120,6 +121,9 @@ final class CameraCaptureModel: NSObject, ObservableObject, AVCapturePhotoCaptur
         videoOutput.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
         videoOutput.setSampleBufferDelegate(self, queue: detectionQueue)
         session.addOutput(videoOutput)
+        if let connection = videoOutput.connection(with: .video), connection.isVideoRotationAngleSupported(0) {
+            connection.videoRotationAngle = 0
+        }
         output.isHighResolutionCaptureEnabled = true
         Task { @MainActor in self.hasTorch = device.hasTorch }
         session.commitConfiguration()
@@ -155,9 +159,13 @@ final class CameraCaptureModel: NSObject, ObservableObject, AVCapturePhotoCaptur
         }
     }
 
-    func capture() {
+    @MainActor func capture() {
+        let angle = captureRotationAngle
         queue.async {
             guard self.session.isRunning, !self.captureInProgress else { return }
+            if let connection = self.output.connection(with: .video), connection.isVideoRotationAngleSupported(angle) {
+                connection.videoRotationAngle = angle
+            }
             self.captureInProgress = true
             self.framesRemaining = self.multiFrameEnabled ? 3 : 1
             self.bestFrameScore = -Double.infinity
@@ -194,7 +202,8 @@ final class CameraCaptureModel: NSObject, ObservableObject, AVCapturePhotoCaptur
         request.maximumAspectRatio = 3.0
         request.quadratureTolerance = 25
         do {
-            try VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: .right).perform([request])
+            // The preview layer converts from the unrotated capture coordinates.
+            try VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: .up).perform([request])
             guard let rectangle = request.results?.first else {
                 // Match the Android stabilizer: a missing observation breaks the
                 // consecutive-frame streak, so a stale quad cannot be reused.
@@ -291,23 +300,26 @@ final class CameraCaptureModel: NSObject, ObservableObject, AVCapturePhotoCaptur
 struct CameraPreview: UIViewRepresentable {
     let session: AVCaptureSession
     let detectedDocument: DocumentQuad?
+    let onRotationChange: (CGFloat) -> Void
 
     func makeUIView(context: Context) -> CameraPreviewView {
         let view = CameraPreviewView()
         view.previewLayer.session = session
         view.previewLayer.videoGravity = .resizeAspectFill
-        view.detectedDocument = detectedDocument
         return view
     }
 
     func updateUIView(_ uiView: CameraPreviewView, context: Context) {
         if uiView.previewLayer.session !== session { uiView.previewLayer.session = session }
+        uiView.onRotationChange = onRotationChange
+        uiView.updateRotation()
         uiView.detectedDocument = detectedDocument
     }
 }
 
 final class CameraPreviewView: UIView {
     var detectedDocument: DocumentQuad? { didSet { updateDocumentOutline() } }
+    var onRotationChange: ((CGFloat) -> Void)?
     private let documentOutline = CAShapeLayer()
 
     override init(frame: CGRect) {
@@ -331,9 +343,33 @@ final class CameraPreviewView: UIView {
     override class var layerClass: AnyClass { AVCaptureVideoPreviewLayer.self }
     var previewLayer: AVCaptureVideoPreviewLayer { layer as! AVCaptureVideoPreviewLayer }
 
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        updateRotation()
+    }
+
     override func layoutSubviews() {
         super.layoutSubviews()
+        updateRotation()
         updateDocumentOutline()
+    }
+
+    func updateRotation() {
+        guard let scene = window?.windowScene else { return }
+        // This scanner uses the back camera, whose unrotated video is landscape right.
+        let angle: CGFloat
+        switch scene.interfaceOrientation {
+        case .portrait: angle = 90
+        case .portraitUpsideDown: angle = 270
+        case .landscapeRight: angle = 0
+        case .landscapeLeft: angle = 180
+        default: return
+        }
+        if let connection = previewLayer.connection, connection.videoRotationAngle != angle,
+           connection.isVideoRotationAngleSupported(angle) {
+            connection.videoRotationAngle = angle
+        }
+        onRotationChange?(angle)
     }
 
     private func updateDocumentOutline() {

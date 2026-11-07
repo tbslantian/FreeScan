@@ -63,6 +63,7 @@ enum ImagePipeline {
         let format = UIGraphicsImageRendererFormat.default()
         format.scale = image.scale
         format.opaque = false
+        format.preferredRange = .standard
         return UIGraphicsImageRenderer(size: image.size, format: format).image { _ in
             image.draw(in: CGRect(origin: .zero, size: image.size))
         }
@@ -161,6 +162,7 @@ enum ImagePipeline {
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
         format.opaque = true
+        format.preferredRange = .standard
         return UIGraphicsImageRenderer(size: size, format: format).image { _ in
             normalized.draw(in: CGRect(origin: .zero, size: size))
         }

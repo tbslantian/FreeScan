@@ -30,8 +30,9 @@ struct FreeScanTabs: View {
 
 struct HomeView: View {
     @EnvironmentObject private var library: ScanLibrary
-    @State private var showScanner = false
-    @State private var showCertificates = false
+    @State private var cameraMode: ScanCameraMode?
+    @State private var editorPageID: UUID?
+    @State private var showScanEditor = false
     @State private var selectedPhotos: [PhotosPickerItem] = []
     @State private var showPDFImporter = false
     var body: some View {
@@ -42,7 +43,7 @@ struct HomeView: View {
                         Text("FreeScan").font(.largeTitle.bold())
                         Text("本地扫描、整理并导出文档").foregroundStyle(.secondary)
                     }
-                    Button { showScanner = true } label: {
+                    Button { cameraMode = .document } label: {
                         Label("开始扫描", systemImage: "camera.fill").font(.title3.bold())
                             .frame(maxWidth: .infinity).padding(.vertical, 18)
                     }.buttonStyle(.borderedProminent)
@@ -50,7 +51,7 @@ struct HomeView: View {
                         PhotosPicker(selection: $selectedPhotos, maxSelectionCount: 20, matching: .images) {
                             FeatureCardLabel(title: "相册导入", subtitle: "扫描图片", icon: "photo")
                         }.buttonStyle(.plain)
-                        Button { showCertificates = true } label: {
+                        Button { cameraMode = .certificate } label: {
                             FeatureCardLabel(title: "证件扫描", subtitle: "九种实时取景模板", icon: "person.text.rectangle")
                         }.buttonStyle(.plain)
                         NavigationLink { WatermarkToolView() } label: {
@@ -72,8 +73,17 @@ struct HomeView: View {
                 }.padding()
             }
             .navigationTitle("FreeScan").navigationBarTitleDisplayMode(.inline)
-            .sheet(isPresented: $showScanner) { ScanCameraView(mode: .document) }
-            .sheet(isPresented: $showCertificates) { CertificateScanView() }
+            .sheet(item: $cameraMode, onDismiss: {
+                if editorPageID != nil { showScanEditor = true }
+            }) { mode in
+                ScanCameraView(mode: mode) { editorPageID = $0 }
+            }
+            .navigationDestination(isPresented: $showScanEditor) {
+                ScanEditorView(initialPageID: editorPageID)
+            }
+            .onChange(of: showScanEditor) { _, isShowing in
+                if !isShowing { editorPageID = nil }
+            }
             .onChange(of: selectedPhotos) { _, items in
                 guard !items.isEmpty else { return }
                 selectedPhotos = []
@@ -123,7 +133,11 @@ struct FeatureCardLabel: View {
     }
 }
 
-enum ScanCameraMode: Equatable { case document, certificate }
+enum ScanCameraMode: Hashable, Identifiable {
+    case document, certificate
+
+    var id: Self { self }
+}
 
 struct ScanCameraView: View {
     @EnvironmentObject private var library: ScanLibrary
@@ -134,12 +148,17 @@ struct ScanCameraView: View {
     @State private var isBackSide = false
     @State private var photoItems: [PhotosPickerItem] = []
     @State private var capturedPreview: UIImage?
+    @State private var isPreparingPages = false
+    @State private var firstAddedPageID: UUID?
     let mode: ScanCameraMode
+    let onFinish: (UUID) -> Void
 
     var body: some View {
         NavigationStack {
             ZStack {
-                CameraPreview(session: camera.session, detectedDocument: camera.detectedDocument).ignoresSafeArea()
+                CameraPreview(session: camera.session, detectedDocument: camera.detectedDocument) { angle in
+                    camera.captureRotationAngle = angle
+                }.ignoresSafeArea()
                 VStack(spacing: 16) {
                     HStack {
                         Menu {
@@ -213,6 +232,7 @@ struct ScanCameraView: View {
                             Image(systemName: "photo").font(.title2).foregroundStyle(.white)
                         }.accessibilityLabel("相册导入，可多选")
                     }.padding(.horizontal, 28).padding(.bottom, 24)
+                        .disabled(isPreparingPages)
                 }.padding(.top, 18)
                 if let capturedPreview {
                     VStack(spacing: 12) {
@@ -233,22 +253,25 @@ struct ScanCameraView: View {
                 }
             }
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) { Button("返回") { dismiss() }.foregroundStyle(.white) }
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("返回") { dismiss() }.foregroundStyle(.white).disabled(isPreparingPages)
+                }
                 ToolbarItem(placement: .topBarTrailing) {
-                    if mode == .certificate {
-                        HStack(spacing: 14) {
+                    HStack(spacing: 14) {
+                        if mode == .certificate {
                             Toggle("自动裁边", isOn: $autoCropEnabled).labelsHidden().tint(.green)
-                            Button("完成 (\(library.pages.count))") { dismiss() }.foregroundStyle(.white)
                         }
-                    } else {
-                        Button("完成 (\(library.pages.count))") { dismiss() }.foregroundStyle(.white)
+                        Button("完成 (\(library.pages.count + (capturedPreview == nil ? 0 : 1)))") {
+                            if capturedPreview != nil { acceptCapture(finishAfterAdding: true) }
+                            else { finishScan() }
+                        }.foregroundStyle(.white).disabled(isPreparingPages)
                     }
                 }
             }
             .toolbarBackground(.black.opacity(0.72), for: .navigationBar).toolbarBackground(.visible, for: .navigationBar)
             .onAppear { camera.start() }.onDisappear { camera.stop() }
-            .cameraShutterEvents(isEnabled: camera.isReady && capturedPreview == nil) {
-                guard capturedPreview == nil else { return }
+            .cameraShutterEvents(isEnabled: camera.isReady && capturedPreview == nil && !isPreparingPages) {
+                guard capturedPreview == nil, !isPreparingPages else { return }
                 camera.capture()
             }
             .onChange(of: camera.capturedImage) { _, image in
@@ -257,9 +280,11 @@ struct ScanCameraView: View {
                 camera.capturedImage = nil
             }
             .onChange(of: photoItems) { _, items in
-                guard !items.isEmpty else { return }
+                guard !items.isEmpty, !isPreparingPages else { return }
                 photoItems = []
+                isPreparingPages = true
                 Task {
+                    defer { isPreparingPages = false }
                     for item in items {
                         guard let data = try? await item.loadTransferable(type: Data.self),
                               let image = UIImage(data: data) else { continue }
@@ -271,12 +296,23 @@ struct ScanCameraView: View {
                 Button("好") { camera.errorMessage = nil }
             } message: { Text(camera.errorMessage ?? "") }
         }
+        .interactiveDismissDisabled(isPreparingPages)
     }
 
-    private func acceptCapture() {
-        guard let image = capturedPreview else { return }
+    private func acceptCapture(finishAfterAdding: Bool = false) {
+        guard let image = capturedPreview, !isPreparingPages else { return }
         capturedPreview = nil
-        Task { await appendScannedImage(image) }
+        isPreparingPages = true
+        Task {
+            await appendScannedImage(image)
+            isPreparingPages = false
+            if finishAfterAdding { finishScan() }
+        }
+    }
+
+    private func finishScan() {
+        if let firstAddedPageID { onFinish(firstAddedPageID) }
+        dismiss()
     }
 
     private func appendScannedImage(_ image: UIImage) async {
@@ -287,6 +323,7 @@ struct ScanCameraView: View {
             ImagePipeline.prepareScan(image, autoCrop: shouldCrop, maxDimension: maxDimension, filter: selectedFilter)
         }.value
         library.add(processed)
+        if firstAddedPageID == nil { firstAddedPageID = library.pages.last?.id }
         if mode == .certificate { isBackSide.toggle() }
     }
 }
@@ -398,10 +435,6 @@ private func drawCertificateArtwork(_ template: CertificateTemplate, in rect: CG
     context.stroke(path, with: .color(.white.opacity(0.82)), lineWidth: detailWidth)
 }
 
-struct CertificateScanView: View {
-    var body: some View { ScanCameraView(mode: .certificate) }
-}
-
 struct ScanEditorView: View {
     @EnvironmentObject private var library: ScanLibrary
     @State private var selectedID: UUID?
@@ -422,6 +455,11 @@ struct ScanEditorView: View {
     @AppStorage("exportFormat") private var exportFormat = "PDF"
     @AppStorage("ocrEnabled") private var ocrEnabled = false
     @State private var previewImage: UIImage?
+
+    init(initialPageID: UUID? = nil) {
+        _selectedID = State(initialValue: initialPageID)
+    }
+
     private var current: ScanPage? { library.pages.first(where: { $0.id == selectedID }) ?? library.pages.first }
     private var previewTaskID: String {
         guard let current else { return "none" }

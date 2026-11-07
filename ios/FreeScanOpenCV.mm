@@ -148,8 +148,21 @@ static std::vector<int> tileStarts(int length) {
 }
 
 static cv::Mat rgbaImage(UIImage *image) {
-    cv::Mat rgba;
-    UIImageToMat(image, rgba, true);
+    CGImageRef source = image.CGImage;
+    if (!source) return {};
+
+    // The input profile may be wide-gamut, extended-range or monochrome.
+    // OpenCV always expects the same 8-bit RGBA layout here.
+    cv::Mat rgba(int(CGImageGetHeight(source)), int(CGImageGetWidth(source)), CV_8UC4, cv::Scalar(0, 0, 0, 0));
+    CGColorSpaceRef colorSpace = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+    if (!colorSpace) return {};
+    CGContextRef context = CGBitmapContextCreate(rgba.data, rgba.cols, rgba.rows, 8, rgba.step[0],
+        colorSpace, kCGBitmapByteOrder32Big | kCGImageAlphaPremultipliedLast);
+    CGColorSpaceRelease(colorSpace);
+    if (!context) return {};
+
+    CGContextDrawImage(context, CGRectMake(0, 0, rgba.cols, rgba.rows), source);
+    CGContextRelease(context);
     return rgba;
 }
 
