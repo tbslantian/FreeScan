@@ -33,19 +33,21 @@ struct ScanPage: Identifiable {
     var filter: ScanFilter = .automatic
     var rotation: Int = 0
     var recognizedText: String?
+    var cropQuad: DocumentQuad?
 
     init(image: UIImage) {
         self.init(id: UUID(), original: image, image: image)
     }
 
     init(id: UUID, original: UIImage, image: UIImage, filter: ScanFilter = .automatic,
-         rotation: Int = 0, recognizedText: String? = nil) {
+         rotation: Int = 0, recognizedText: String? = nil, cropQuad: DocumentQuad? = nil) {
         self.id = id
         self.original = original
         self.image = image
         self.filter = filter
         self.rotation = rotation
         self.recognizedText = recognizedText
+        self.cropQuad = cropQuad
     }
 }
 
@@ -62,7 +64,11 @@ final class ScanLibrary: ObservableObject {
     func add(_ image: UIImage) {
         let filter = ScanFilter(rawValue: UserDefaults.standard.string(forKey: "defaultFilter") ?? "") ?? .automatic
         let upright = ImagePipeline.upright(image)
-        pages.append(ScanPage(id: UUID(), original: upright, image: upright, filter: filter))
+        add(ScanPage(id: UUID(), original: upright, image: upright, filter: filter))
+    }
+
+    func add(_ page: ScanPage) {
+        pages.append(page)
         persistDraft()
     }
 
@@ -205,6 +211,7 @@ private enum ScanDraftPersistence {
         let filter: String
         let rotation: Int
         let recognizedText: String?
+        let cropQuad: DocumentQuad?
     }
 
     private static var root: URL {
@@ -231,7 +238,8 @@ private enum ScanDraftPersistence {
                     image: image,
                     filter: ScanFilter(rawValue: record.filter) ?? .automatic,
                     rotation: record.rotation,
-                    recognizedText: record.recognizedText
+                    recognizedText: record.recognizedText,
+                    cropQuad: record.cropQuad
                 )
             }
         } catch {
@@ -265,7 +273,8 @@ private enum ScanDraftPersistence {
                     imageFile: imageFile,
                     filter: page.filter.rawValue,
                     rotation: page.rotation,
-                    recognizedText: page.recognizedText
+                    recognizedText: page.recognizedText,
+                    cropQuad: page.cropQuad
                 ))
             }
 

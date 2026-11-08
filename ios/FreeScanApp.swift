@@ -34,6 +34,7 @@ struct HomeView: View {
     @State private var editorPageID: UUID?
     @State private var showScanEditor = false
     @State private var selectedPhotos: [PhotosPickerItem] = []
+    @State private var isImportingPhotos = false
     @State private var showPDFImporter = false
     var body: some View {
         NavigationStack {
@@ -73,7 +74,13 @@ struct HomeView: View {
                 }.padding()
             }
             .navigationTitle("FreeScan").navigationBarTitleDisplayMode(.inline)
-            .sheet(item: $cameraMode, onDismiss: {
+            .disabled(isImportingPhotos)
+            .overlay {
+                if isImportingPhotos {
+                    ProgressView("正在处理扫描…").padding().background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                }
+            }
+            .fullScreenCover(item: $cameraMode, onDismiss: {
                 if editorPageID != nil { showScanEditor = true }
             }) { mode in
                 ScanCameraView(mode: mode) { editorPageID = $0 }
@@ -87,11 +94,13 @@ struct HomeView: View {
             .onChange(of: selectedPhotos) { _, items in
                 guard !items.isEmpty else { return }
                 selectedPhotos = []
+                isImportingPhotos = true
                 Task {
                     let autoCrop = UserDefaults.standard.object(forKey: "autoCropEnabled") as? Bool ?? true
                     let resolution = CameraResolutionPreset(
                         rawValue: UserDefaults.standard.string(forKey: "scanResolution") ?? "4K") ?? .fourK
                     let selectedFilter = ScanFilter(rawValue: UserDefaults.standard.string(forKey: "defaultFilter") ?? "") ?? .automatic
+                    var firstPageID: UUID?
                     for item in items {
                         guard let data = try? await item.loadTransferable(type: Data.self),
                               let image = UIImage(data: data) else { continue }
@@ -100,6 +109,12 @@ struct HomeView: View {
                                                       maxDimension: resolution.maxDimension, filter: selectedFilter)
                         }.value
                         library.add(processed)
+                        if firstPageID == nil { firstPageID = processed.id }
+                    }
+                    isImportingPhotos = false
+                    if let firstPageID {
+                        editorPageID = firstPageID
+                        showScanEditor = true
                     }
                 }
             }
@@ -147,7 +162,7 @@ struct ScanCameraView: View {
     @State private var template = CertificateTemplate.all[0]
     @State private var isBackSide = false
     @State private var photoItems: [PhotosPickerItem] = []
-    @State private var capturedPreview: UIImage?
+    @State private var pendingPage: ScanPage?
     @State private var isPreparingPages = false
     @State private var firstAddedPageID: UUID?
     let mode: ScanCameraMode
@@ -156,9 +171,10 @@ struct ScanCameraView: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                CameraPreview(session: camera.session, detectedDocument: camera.detectedDocument) { angle in
-                    camera.captureRotationAngle = angle
-                }.ignoresSafeArea()
+                CameraPreview(session: camera.session,
+                              detectedDocument: autoCropEnabled ? camera.detectedDocument : nil,
+                              onRotationChange: camera.updateRotation)
+                    .ignoresSafeArea()
                 VStack(spacing: 16) {
                     HStack {
                         Menu {
@@ -232,52 +248,64 @@ struct ScanCameraView: View {
                             Image(systemName: "photo").font(.title2).foregroundStyle(.white)
                         }.accessibilityLabel("相册导入，可多选")
                     }.padding(.horizontal, 28).padding(.bottom, 24)
-                        .disabled(isPreparingPages)
+                        .disabled(isPreparingPages || camera.isCapturing)
                 }.padding(.top, 18)
-                if let capturedPreview {
+                if let pendingPage {
                     VStack(spacing: 12) {
                         Text(mode == .certificate ? "检查证件照片" : "检查扫描结果")
                             .font(.headline).foregroundStyle(.white)
-                        Image(uiImage: capturedPreview)
+                        Image(uiImage: pendingPage.image)
                             .resizable().scaledToFit().frame(maxWidth: .infinity, maxHeight: .infinity)
                             .padding(.horizontal, 12)
                         HStack(spacing: 16) {
-                            Button("重拍") { self.capturedPreview = nil }
+                            Button("重拍") { self.pendingPage = nil }
                                 .buttonStyle(.bordered).tint(.white)
                             Button(mode == .certificate ? "使用此面" : "添加页面") { acceptCapture() }
+                                .buttonStyle(.bordered).tint(.white)
+                            Button("完成并编辑") { acceptCapture(); finishScan() }
                                 .buttonStyle(.borderedProminent).tint(.green)
                         }.padding(.bottom, 22)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(Color.black.ignoresSafeArea())
                 }
+                if isPreparingPages {
+                    ProgressView("正在处理扫描…").tint(.white).foregroundStyle(.white)
+                        .padding().background(.black.opacity(0.8), in: RoundedRectangle(cornerRadius: 12))
+                }
             }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("返回") { dismiss() }.foregroundStyle(.white).disabled(isPreparingPages)
+                    Button("返回") { dismiss() }.foregroundStyle(.white)
+                        .disabled(isPreparingPages || camera.isCapturing)
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     HStack(spacing: 14) {
                         if mode == .certificate {
                             Toggle("自动裁边", isOn: $autoCropEnabled).labelsHidden().tint(.green)
                         }
-                        Button("完成 (\(library.pages.count + (capturedPreview == nil ? 0 : 1)))") {
-                            if capturedPreview != nil { acceptCapture(finishAfterAdding: true) }
-                            else { finishScan() }
-                        }.foregroundStyle(.white).disabled(isPreparingPages)
+                        Button("完成 (\(library.pages.count + (pendingPage == nil ? 0 : 1)))") {
+                            acceptCapture()
+                            finishScan()
+                        }.foregroundStyle(.white).disabled(isPreparingPages || camera.isCapturing)
                     }
                 }
             }
             .toolbarBackground(.black.opacity(0.72), for: .navigationBar).toolbarBackground(.visible, for: .navigationBar)
             .onAppear { camera.start() }.onDisappear { camera.stop() }
-            .cameraShutterEvents(isEnabled: camera.isReady && capturedPreview == nil && !isPreparingPages) {
-                guard capturedPreview == nil, !isPreparingPages else { return }
+            .onChange(of: autoCropEnabled, initial: true) { _, enabled in camera.setDetectionEnabled(enabled) }
+            .cameraShutterEvents(isEnabled: camera.isReady && pendingPage == nil && !isPreparingPages && !camera.isCapturing) {
+                guard pendingPage == nil, !isPreparingPages else { return }
                 camera.capture()
             }
             .onChange(of: camera.capturedImage) { _, image in
                 guard let image else { return }
-                capturedPreview = image
                 camera.capturedImage = nil
+                isPreparingPages = true
+                Task {
+                    pendingPage = await preparePage(image)
+                    isPreparingPages = false
+                }
             }
             .onChange(of: photoItems) { _, items in
                 guard !items.isEmpty, !isPreparingPages else { return }
@@ -288,7 +316,7 @@ struct ScanCameraView: View {
                     for item in items {
                         guard let data = try? await item.loadTransferable(type: Data.self),
                               let image = UIImage(data: data) else { continue }
-                        await appendScannedImage(image)
+                        appendScannedPage(await preparePage(image))
                     }
                 }
             }
@@ -296,18 +324,12 @@ struct ScanCameraView: View {
                 Button("好") { camera.errorMessage = nil }
             } message: { Text(camera.errorMessage ?? "") }
         }
-        .interactiveDismissDisabled(isPreparingPages)
     }
 
-    private func acceptCapture(finishAfterAdding: Bool = false) {
-        guard let image = capturedPreview, !isPreparingPages else { return }
-        capturedPreview = nil
-        isPreparingPages = true
-        Task {
-            await appendScannedImage(image)
-            isPreparingPages = false
-            if finishAfterAdding { finishScan() }
-        }
+    private func acceptCapture() {
+        guard let pendingPage else { return }
+        appendScannedPage(pendingPage)
+        self.pendingPage = nil
     }
 
     private func finishScan() {
@@ -315,15 +337,18 @@ struct ScanCameraView: View {
         dismiss()
     }
 
-    private func appendScannedImage(_ image: UIImage) async {
+    private func preparePage(_ image: UIImage) async -> ScanPage {
         let shouldCrop = autoCropEnabled
         let maxDimension = camera.resolution.maxDimension
         let selectedFilter = ScanFilter(rawValue: UserDefaults.standard.string(forKey: "defaultFilter") ?? "") ?? .automatic
-        let processed = await Task.detached(priority: .userInitiated) {
+        return await Task.detached(priority: .userInitiated) {
             ImagePipeline.prepareScan(image, autoCrop: shouldCrop, maxDimension: maxDimension, filter: selectedFilter)
         }.value
-        library.add(processed)
-        if firstAddedPageID == nil { firstAddedPageID = library.pages.last?.id }
+    }
+
+    private func appendScannedPage(_ page: ScanPage) {
+        library.add(page)
+        if firstAddedPageID == nil { firstAddedPageID = page.id }
         if mode == .certificate { isBackSide.toggle() }
     }
 }
@@ -582,7 +607,8 @@ struct ScanEditorView: View {
                 let selectedFilter = filter
                 let shouldRemoveShadows = removeShadowsEnabled
                 let result = await Task.detached(priority: .userInitiated) {
-                    ImagePipeline.filtered(source, mode: selectedFilter, removeShadows: shouldRemoveShadows)
+                    let displayImage = ImagePipeline.resize(source, maxDimension: 1600)
+                    return ImagePipeline.filtered(displayImage, mode: selectedFilter, removeShadows: shouldRemoveShadows)
                 }.value
                 guard !Task.isCancelled, requestID == previewTaskID else { return }
                 previewImage = result
@@ -623,7 +649,13 @@ struct ScanEditorView: View {
         selectedID = library.pages.indices.contains(currentIndex) ? library.pages[currentIndex].id : nil
     }
     private func rotate(_ page: ScanPage) {
-        library.update(page.id) { $0.image = ImagePipeline.rotated($0.image, clockwiseDegrees: 90); $0.original = $0.image }
+        library.update(page.id) {
+            let original = ImagePipeline.rotatedClockwise($0.original)
+            $0.image = $0.image === $0.original ? original : ImagePipeline.rotatedClockwise($0.image)
+            $0.original = original
+            $0.cropQuad = $0.cropQuad?.rotatedClockwise()
+            $0.recognizedText = nil
+        }
     }
     private func deskew(_ page: ScanPage) {
         guard !isDeskewing else { return }
@@ -636,7 +668,8 @@ struct ScanEditorView: View {
                 }.value
                 if result.angle != 0 {
                     library.update(page.id) {
-                        $0.image = result.image; $0.original = result.image; $0.recognizedText = nil
+                        $0.image = result.image
+                        $0.recognizedText = nil
                     }
                     deskewMessage = String(format: "已校正 %.2f° 的文字行倾斜", abs(result.angle))
                 } else {
@@ -756,22 +789,35 @@ struct ManualCropView: View {
     @EnvironmentObject private var library: ScanLibrary
     @Environment(\.dismiss) private var dismiss
     let page: ScanPage
-    @State private var corners = [
-        CGPoint(x: 0.03, y: 0.03), CGPoint(x: 0.97, y: 0.03),
-        CGPoint(x: 0.97, y: 0.97), CGPoint(x: 0.03, y: 0.97),
-    ]
+    @State private var corners: [CGPoint]
     @State private var activeCorner: Int?
     @State private var dragStart: CGPoint?
+    @State private var isApplying = false
+    @State private var cropFailed = false
+
+    init(page: ScanPage) {
+        self.page = page
+        _corners = State(initialValue: page.cropQuad?.points ?? [
+            CGPoint(x: 0.03, y: 0.03), CGPoint(x: 0.97, y: 0.03),
+            CGPoint(x: 0.97, y: 0.97), CGPoint(x: 0.03, y: 0.97),
+        ])
+    }
+
+    private var quad: DocumentQuad {
+        DocumentQuad(topLeft: corners[0], topRight: corners[1],
+                     bottomRight: corners[2], bottomLeft: corners[3])
+    }
+
     var body: some View {
         NavigationStack {
             VStack(spacing: 12) {
                 Text("拖动四个绿色控制点，对齐纸张四角")
                     .font(.footnote).foregroundStyle(.secondary)
                 GeometryReader { proxy in
-                    let fitted = AVMakeRect(aspectRatio: page.image.size,
+                    let fitted = AVMakeRect(aspectRatio: page.original.size,
                                             insideRect: CGRect(origin: .zero, size: proxy.size))
                     ZStack {
-                        Image(uiImage: page.image).resizable().scaledToFit()
+                        Image(uiImage: page.original).resizable().scaledToFit()
                         Canvas { context, _ in
                             guard corners.count == 4, let first = corners.first else { return }
                             func screenPoint(_ point: CGPoint) -> CGPoint {
@@ -782,7 +828,7 @@ struct ManualCropView: View {
                             path.move(to: screenPoint(first))
                             corners.dropFirst().forEach { path.addLine(to: screenPoint($0)) }
                             path.closeSubpath()
-                            context.stroke(path, with: .color(.green), lineWidth: 3)
+                            context.stroke(path, with: .color(quad.isValid ? .green : .orange), lineWidth: 3)
                         }
                         ForEach(corners.indices, id: \.self) { index in
                             Circle()
@@ -809,21 +855,40 @@ struct ManualCropView: View {
                                     })
                         }
                     }
-                }.frame(maxHeight: 360)
-                Spacer()
+                }.disabled(isApplying)
+                if isApplying { ProgressView("正在裁边…") }
             }.padding().navigationTitle("手动裁边")
+                .interactiveDismissDisabled(isApplying)
                 .toolbar {
-                    ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("取消") { dismiss() }.disabled(isApplying)
+                    }
                     ToolbarItem(placement: .confirmationAction) {
-                        Button("应用") {
-                            let quad = DocumentQuad(topLeft: corners[0], topRight: corners[1],
-                                                    bottomRight: corners[2], bottomLeft: corners[3])
-                            let cropped = ImagePipeline.perspectiveCrop(page.image, quad: quad)
-                            library.update(page.id) { $0.image = cropped; $0.original = cropped }
-                            dismiss()
-                        }
+                        Button("应用") { applyCrop() }.disabled(isApplying || !quad.isValid)
                     }
                 }
+                .alert("无法应用裁边，请调整控制点后重试。", isPresented: $cropFailed) {
+                    Button("好", role: .cancel) {}
+                }
+        }
+    }
+
+    private func applyCrop() {
+        let cropQuad = quad
+        let original = page.original
+        isApplying = true
+        Task {
+            let cropped = await Task.detached(priority: .userInitiated) {
+                ImagePipeline.cropForScan(original, quad: cropQuad)
+            }.value
+            isApplying = false
+            guard let cropped else { cropFailed = true; return }
+            library.update(page.id) {
+                $0.image = cropped
+                $0.cropQuad = cropQuad
+                $0.recognizedText = nil
+            }
+            dismiss()
         }
     }
 }

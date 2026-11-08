@@ -4,11 +4,11 @@ This is the native SwiftUI companion project for the Android FreeScan app. It ta
 
 ## Features
 
-- Camera capture and photo import, Vision document-edge detection, perspective correction, and optional auto-crop.
-- Guarded text-line deskew through OpenCV Canny/Hough/median angle: automatic after capture/photo auto-crop except in original mode, plus a manual editor action. It corrects 0.35–4 degree global tilt with at least four supporting lines; it does not flatten curved text or book pages.
+- Full-screen camera and photo import share on-device Vision document segmentation, four-corner detection and OpenCV perspective correction. The editor keeps the source frame and detected corners so users can adjust the crop.
+- OpenCV corrects 0.35–4 degree text-line tilt after perspective correction and on demand in the editor. It estimates glyph baselines and uses Canny/Hough lines when glyph evidence is sparse.
 - Nine certificate/document framing templates with live camera guides.
 - Multi-page editing: page selection, rotation, manual crop, color/grayscale/black-and-white/enhance filters.
-- Color, grayscale and bitonal modes use the OpenCV illumination/Lab white-balance/Retinex/Sauvola pipeline ported from Android. Brightness and enhanced-gray modes use reconstructed native histogram mapping and gray conversion. Preview, export and print share the processing order, and original mode bypasses enhancement. Enhanced/soft modes remain Core Image approximations of Android-only `DocFilters` binaries.
+- Color, grayscale and bitonal modes use the OpenCV illumination, Lab white-balance, Retinex and Sauvola pipeline ported from Android. The enhanced and soft modes use local illumination estimation, reconstructed reflection curves and sharpening. Enhanced gray applies grayscale after enhancement. Preview, export and print share these filters. See the [iOS scan analysis](porting/BUDING_IOS_SCAN.md).
 - Single or multiple PDF import from Files into a persistent app-local library, editable image pages, PDF/JPEG export with custom names, Files sharing, and AirPrint.
 - Optional on-device Vision or Tesseract OCR, off by default. Enable it in Settings to recognize the current page or explicitly create a searchable PDF from the editor. Ordinary PDF exports process and write pages individually without running recognition. Tesseract supports the same catalog of 120 downloadable `tessdata_fast` language packs as Android, including multi-language activation, download cancellation and removal. Downloads are verified against a fixed official repository revision.
 - QR detection, Quark blue-footer compatibility detection, and local region repair for images and imported PDFs, plus multi-region manual repair.

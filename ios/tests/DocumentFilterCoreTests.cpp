@@ -22,6 +22,16 @@ int main() {
         require(afterStd[0]<beforeStd[0]*.5,"Shadow correction did not flatten paper illumination");
         cv::Mat inkMask;cv::inRange(original,cv::Scalar(0,0,0),cv::Scalar(40,40,40),inkMask);
         require(cv::countNonZero(inkMask)>100 && cv::mean(flattened,inkMask)[0]<80,"Shadow correction destroyed dark text");
+        auto enhanced = freescan::documentFilter(page, 8, true);
+        auto soft = freescan::documentFilter(page, 9, true);
+        require(enhanced.type() == page.type() && enhanced.size() == page.size(), "Enhancement changed raster geometry");
+        require(enhanced.at<cv::Vec3b>(80, 80)[0] > 239 && cv::mean(enhanced, inkMask)[0] < 45,
+                "Enhancement failed to lift shaded paper or preserve ink");
+        require(soft.at<cv::Vec3b>(80, 80)[0] < enhanced.at<cv::Vec3b>(80, 80)[0] - 25,
+                "Soft mode lost its raw intensity component");
+        require(cv::norm(freescan::documentFilter(page, 10, true), freescan::legacyGray(enhanced), cv::NORM_INF) == 0,
+                "Enhanced grayscale did not convert the enhanced color result");
+        require(cv::norm(original, page, cv::NORM_INF) == 0, "Enhancement mutated its source");
         auto gray=freescan::documentFilter(page,1,true);
         require(gray.type()==CV_8UC1 && gray.size()==page.size(),"Grayscale type or size changed");
         cv::Mat blank(300,300,CV_8UC3,cv::Scalar(246,246,246));

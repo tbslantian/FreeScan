@@ -7,6 +7,7 @@
 #import "FreeScanOpenCV.h"
 #include "QRRepairCore.hpp"
 #include "DeskewCore.hpp"
+#include "DocumentGeometryCore.hpp"
 #include "DocumentFilterCore.hpp"
 #include <algorithm>
 #include <cmath>
@@ -198,6 +199,23 @@ static UIImage *repairedImage(cv::Mat &rgba, const cv::Rect &roi,
         return [[FreeScanDeskewResult alloc] initWithImage:angle==0?image:MatToUIImage(output) angle:angle];
     } catch (const std::exception &error) {
         NSLog(@"FreeScan text deskew failed: %s",error.what());return nil;
+    }
+}
++ (UIImage *)rectifyDocument:(UIImage *)image corners:(NSArray<NSValue *> *)corners {
+    if (corners.count != 4) return nil;
+    try {
+        std::array<cv::Point2f, 4> points;
+        for (NSUInteger i = 0; i < points.size(); ++i) {
+            CGPoint p = corners[i].CGPointValue;
+            points[i] = cv::Point2f(float(p.x), float(p.y));
+        }
+        auto rectified = freescan::rectifyDocument(rgbaImage(image), points);
+        if (rectified.empty()) return nil;
+        auto result = MatToUIImage(rectified);
+        return result.CGImage ? [UIImage imageWithCGImage:result.CGImage scale:image.scale orientation:UIImageOrientationUp] : nil;
+    } catch (const std::exception &error) {
+        NSLog(@"FreeScan document rectification failed: %s", error.what());
+        return nil;
     }
 }
 + (NSArray<FreeScanQRCodeCandidate *> *)qrCandidates:(UIImage *)image {
