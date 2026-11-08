@@ -6,6 +6,7 @@
 import CoreImage
 import CoreImage.CIFilterBuiltins
 import CoreText
+import CoreVideo
 import Foundation
 import UIKit
 import Vision
@@ -131,10 +132,31 @@ enum ImagePipeline {
 
     private static func detectDocumentQuad(_ image: UIImage) -> DocumentQuad? {
         guard let cgImage = image.cgImage else { return nil }
-        return detectDocumentQuad(VNImageRequestHandler(cgImage: cgImage, orientation: .up))
+        return detectDocumentEdges(CIImage(cgImage: cgImage)) ??
+            detectDocumentWithVision(VNImageRequestHandler(cgImage: cgImage, orientation: .up))
     }
 
-    static func detectDocumentQuad(_ handler: VNImageRequestHandler) -> DocumentQuad? {
+    static func detectDocumentQuad(_ buffer: CVPixelBuffer, orientation: CGImagePropertyOrientation) -> DocumentQuad? {
+        let image = CIImage(cvPixelBuffer: buffer).oriented(orientation)
+        return detectDocumentEdges(image) ??
+            detectDocumentWithVision(VNImageRequestHandler(cvPixelBuffer: buffer, orientation: orientation))
+    }
+
+    private static func detectDocumentEdges(_ image: CIImage) -> DocumentQuad? {
+        let extent = image.extent
+        guard extent.width > 0, extent.height > 0 else { return nil }
+        let modelSize: CGFloat = 256
+        let input = image.transformed(by: CGAffineTransform(translationX: -extent.minX, y: -extent.minY))
+            .transformed(by: CGAffineTransform(scaleX: modelSize / extent.width, y: modelSize / extent.height))
+        let bounds = CGRect(x: 0, y: 0, width: modelSize, height: modelSize)
+        guard let sample = ciContext.createCGImage(input, from: bounds),
+              let corners = FreeScanOpenCV.documentCorners(sample), corners.count == 4 else { return nil }
+        let quad = DocumentQuad(topLeft: corners[0].cgPointValue, topRight: corners[1].cgPointValue,
+                                bottomRight: corners[2].cgPointValue, bottomLeft: corners[3].cgPointValue)
+        return quad.isValid ? quad : nil
+    }
+
+    private static func detectDocumentWithVision(_ handler: VNImageRequestHandler) -> DocumentQuad? {
         let segmentation = VNDetectDocumentSegmentationRequest()
         if (try? handler.perform([segmentation])) != nil,
            let quad = segmentation.results?.compactMap(documentQuad).first {

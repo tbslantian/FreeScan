@@ -8,9 +8,11 @@
 #include "QRRepairCore.hpp"
 #include "DeskewCore.hpp"
 #include "DocumentGeometryCore.hpp"
+#include "DocumentEdgeCore.hpp"
 #include "DocumentFilterCore.hpp"
 #include <algorithm>
 #include <cmath>
+#include <mutex>
 
 @implementation FreeScanDeskewResult
 - (instancetype)initWithImage:(UIImage *)image angle:(double)angle {
@@ -148,8 +150,7 @@ static std::vector<int> tileStarts(int length) {
     return starts;
 }
 
-static cv::Mat rgbaImage(UIImage *image) {
-    CGImageRef source = image.CGImage;
+static cv::Mat rgbaImage(CGImageRef source) {
     if (!source) return {};
 
     // The input profile may be wide-gamut, extended-range or monochrome.
@@ -167,6 +168,10 @@ static cv::Mat rgbaImage(UIImage *image) {
     return rgba;
 }
 
+static cv::Mat rgbaImage(UIImage *image) {
+    return rgbaImage(image.CGImage);
+}
+
 static UIImage *repairedImage(cv::Mat &rgba, const cv::Rect &roi,
                               const cv::Mat &mask, double radius) {
     cv::Mat bgr, result, resultRGBA;
@@ -178,6 +183,35 @@ static UIImage *repairedImage(cv::Mat &rgba, const cv::Rect &roi,
 }
 
 @implementation FreeScanOpenCV
++ (NSArray<NSValue *> *)documentCorners:(CGImageRef)image {
+    static cv::dnn::Net model = [] {
+        NSString *path = [[NSBundle mainBundle] pathForResource:@"ScanEdgeModel" ofType:@"onnx"];
+        if (!path) return cv::dnn::Net();
+        try {
+            return cv::dnn::readNetFromONNX(path.fileSystemRepresentation);
+        } catch (const std::exception &error) {
+            NSLog(@"FreeScan edge model loading failed: %s", error.what());
+            return cv::dnn::Net();
+        }
+    }();
+    static std::mutex inferenceMutex;
+    try {
+        auto rgba = rgbaImage(image);
+        if (rgba.empty()) return nil;
+        cv::Mat rgb;
+        cv::cvtColor(rgba, rgb, cv::COLOR_RGBA2RGB);
+        std::lock_guard<std::mutex> guard(inferenceMutex);
+        auto quad = freescan::detectDocumentEdges(model, rgb);
+        if (!quad) return nil;
+        NSMutableArray<NSValue *> *points = [NSMutableArray arrayWithCapacity:4];
+        for (const auto &point : *quad)
+            [points addObject:[NSValue valueWithCGPoint:CGPointMake(point.x, point.y)]];
+        return points;
+    } catch (const std::exception &error) {
+        NSLog(@"FreeScan edge detection failed: %s", error.what());
+        return nil;
+    }
+}
 + (UIImage *)filteredImage:(UIImage *)image mode:(NSInteger)mode shadows:(BOOL)shadows {
     try {
         cv::Mat rgba=rgbaImage(image),bgr,result;

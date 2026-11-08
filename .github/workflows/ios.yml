@@ -84,7 +84,7 @@ jobs:
           set -euo pipefail
           framework=$(find "$RUNNER_TEMP/FreeScanDerivedData/SourcePackages/artifacts" -type d -path '*/macos-*/opencv2.framework' -print -quit)
           test -n "$framework"
-          for native_test in QRRepairCoreTests DeskewCoreTests DocumentFilterCoreTests LegacyDocumentFilterCoreTests; do
+          for native_test in QRRepairCoreTests DeskewCoreTests DocumentFilterCoreTests LegacyDocumentFilterCoreTests DocumentEdgeCoreTests; do
             xcrun clang++ -std=c++17 "ios/tests/$native_test.cpp" \
               -F "$(dirname "$framework")" -framework opencv2 \
               -framework Accelerate -framework AVFoundation -framework CoreImage \
@@ -132,6 +132,7 @@ jobs:
       - name: Verify device-only package inputs
         run: |
           python3 -B -m unittest discover -s ios/tests -p test_device_package.py
+          cmp ios/ScanEdgeModel.onnx "$RUNNER_TEMP/FreeScanDerivedData/Build/Products/Release-iphoneos/FreeScan.app/ScanEdgeModel.onnx"
           python3 ios/package_device_test.py --verify-only "$RUNNER_TEMP/FreeScanDerivedData/Build/Products/Release-iphoneos/FreeScan.app"
 
       - name: Package unsigned device-test IPA for local signing

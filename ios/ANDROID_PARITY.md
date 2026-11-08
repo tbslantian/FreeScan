@@ -14,7 +14,7 @@ Status is based on the current Android screens and services under `app/src/main/
 
 ## Remaining parity work
 
-- [x] Camera: throttled Vision document segmentation and rectangle fallback, a smoothed four-corner outline, 1080p/2K/4K output sizing, flash modes, and torch control.
+- [x] Camera: throttled HED edge inference with a Vision fallback, a smoothed four-corner outline, 1080p/2K/4K output sizing, flash modes, and torch control.
 - [x] Camera: optional three-frame capture that retains the sharpest frame.
 - [x] Camera: match Android's three-consecutive-frame quad stabilizer and its 20 px movement threshold on a 640×480 reference preview.
 - [x] Camera: use Apple's SwiftUI camera capture events for hardware volume-key shutter on iOS 18 and later, only while capture is ready and no captured-photo review is visible. iOS 17 retains the on-screen shutter.
@@ -44,7 +44,7 @@ Status is based on the current Android screens and services under `app/src/main/
 - [x] Image filters: expose per-page automatic, original, color, grayscale, black-and-white, brightness, enhanced, enhanced grayscale, and soft-enhanced modes.
 - [x] Basic filters: OpenCV illumination flattening, Lab white balance, Retinex grayscale, Sauvola thresholding and flat-fill/hole protection have been ported from Android. Native regressions pass for shadow reduction, text preservation, true binary values, dark fills/light lettering, blank pages and colored annotations. Auto color uses the same Lab/gray-world thresholds on the cropped frame instead of Android's segmentation mask. Extra guards retain constant grayscale pages and original smooth dark fills when Retinex would lose their contrast. Preview/export/print share illumination-before-filter ordering; original mode bypasses both.
 - [x] Legacy brightness/gray: reconstructed the Android library's histogram endpoint mapping and plain gray conversion; both replace their previous Core Image approximations. Device Release compilation and tone-map/channel-weight/row-stride/shadow-order regressions pass. Original ARM64 brightness worker instructions were emulated for 9,216 channel samples across four intervals, with OpenMP/TLS modeled locally; the pixel mapping and untouched row padding match. This is not a full Android/iOS runtime comparison. See [porting/LEGACY_FILTERS.md](porting/LEGACY_FILTERS.md).
-- [ ] Enhanced/soft output parity: iOS uses the recovered reflection curves and sharpening with its own paper-field estimation. Pixel-level comparison against the Android and reference iOS builds remains open. See [porting/BUDING_IOS_SCAN.md](porting/BUDING_IOS_SCAN.md).
+- [ ] Enhanced/soft output parity: iOS uses the recovered block-grid paper estimation, reflection curves and sharpening. The reference's full saturation-based fallback logic and pixel-level comparison remain open. See [porting/BUDING_IOS_SCAN.md](porting/BUDING_IOS_SCAN.md).
 - [ ] Image processing: compare output quality for each Android filter and geometry operation against iOS, including scan resolution and shadow correction.
 - [x] Paper eraser: manual brush strokes, brush sizing, undo/redo, clear, original/result comparison, repeat painting, and JPEG sharing.
 - [x] Paper eraser: use OpenCV 4.12.0 on both platforms, matching HSV bounds, 10% color-area guard, 32 px ROI padding, 3x3 elliptical close, 5–9 px dilation, and Telea radius. Brush repair uses matching stroke rasterization, crop padding, 3x3 dilation and Telea radius rules. Device output comparison is still required.

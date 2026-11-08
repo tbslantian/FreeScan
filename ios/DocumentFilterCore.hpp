@@ -6,6 +6,7 @@
 #include <array>
 #include <cmath>
 #include "LegacyDocumentFilterCore.hpp"
+#include "ScanPaperField.hpp"
 
 namespace freescan {
 // Port of imageprocessing/PostProcessing.kt. Core input/output uses BGR.
@@ -168,25 +169,23 @@ inline uchar sharpenScanChannel(int value, int blurred) {
     return uchar(std::clamp((5 * value - 3 * blurred) / 2, 0, 255));
 }
 
-// The iOS reference applies two separate truncated byte tables, then unsharp
-// masking. Estimate its local paper field independently at reduced resolution.
+// The iOS reference uses a coarse paper field, two truncated byte tables and
+// unsharp masking. The global field keeps the app's shadow-removal switch.
 inline cv::Mat scanEnhancement(const cv::Mat &bgr, double softening, bool shadows) {
     const int shortEdge = std::min(bgr.cols, bgr.rows);
     if (shortEdge < 24) return legacyBrightness(bgr);
-    const double scale = std::min({1.0, 600.0 / shortEdge, 1800.0 / std::max(bgr.cols, bgr.rows)});
-    cv::Mat sample;
-    cv::resize(bgr, sample, cv::Size(std::max(1, cvRound(bgr.cols * scale)),
-                                    std::max(1, cvRound(bgr.rows * scale))), 0, 0, cv::INTER_AREA);
     cv::Mat paper;
     if (shadows) {
-        int window = std::clamp(cvRound(std::min(sample.cols, sample.rows) / 18.0), 5, 41) | 1;
-        cv::morphologyEx(sample, paper, cv::MORPH_CLOSE,
-                         cv::getStructuringElement(cv::MORPH_RECT, cv::Size(window, window)));
-        cv::GaussianBlur(paper, paper, cv::Size(window, window), 0);
+        paper = scanPaperField(bgr);
+        if (paper.empty()) return legacyBrightness(bgr);
     } else {
+        const double scale = std::min({1.0, 600.0 / shortEdge, 1800.0 / std::max(bgr.cols, bgr.rows)});
+        cv::Mat sample;
+        cv::resize(bgr, sample, cv::Size(std::max(1, cvRound(bgr.cols * scale)),
+                                        std::max(1, cvRound(bgr.rows * scale))), 0, 0, cv::INTER_AREA);
         std::vector<cv::Mat> channels;
         cv::split(sample, channels);
-        paper = cv::Mat(sample.size(), sample.type(), cv::Scalar(
+        paper = cv::Mat(1, 1, CV_8UC3, cv::Scalar(
             histogramPercentile(channels[0], .95), histogramPercentile(channels[1], .95),
             histogramPercentile(channels[2], .95)));
     }

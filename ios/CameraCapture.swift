@@ -4,9 +4,9 @@
  */
 
 import AVFoundation
+import ImageIO
 import SwiftUI
 import UIKit
-import Vision
 
 enum CameraResolutionPreset: String, CaseIterable, Identifiable {
     case fullHD = "1080p"
@@ -253,8 +253,7 @@ final class CameraCaptureModel: NSObject, ObservableObject, AVCapturePhotoCaptur
         case 270: orientation = .left
         default: orientation = .up
         }
-        let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: orientation)
-        guard var detected = ImagePipeline.detectDocumentQuad(handler) else {
+        guard var detected = ImagePipeline.detectDocumentQuad(pixelBuffer, orientation: orientation) else {
             resetDetection()
             return
         }
