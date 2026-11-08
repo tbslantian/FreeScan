@@ -164,6 +164,10 @@ inline bool containsDocumentColor(const cv::Mat &bgr) {
     return double(colored)/pixels>.0003;
 }
 
+inline uchar sharpenScanChannel(int value, int blurred) {
+    return uchar(std::clamp((5 * value - 3 * blurred) / 2, 0, 255));
+}
+
 // The iOS reference applies two separate truncated byte tables, then unsharp
 // masking. Estimate its local paper field independently at reduced resolution.
 inline cv::Mat scanEnhancement(const cv::Mat &bgr, double softening, bool shadows) {
@@ -210,7 +214,15 @@ inline cv::Mat scanEnhancement(const cv::Mat &bgr, double softening, bool shadow
     });
     cv::Mat blurred;
     cv::GaussianBlur(output, blurred, cv::Size(3, 3), 1);
-    cv::addWeighted(output, 2.5, blurred, -1.5, 0, output);
+    cv::parallel_for_(cv::Range(0, output.rows), [&](const cv::Range &rows) {
+        for (int y = rows.start; y < rows.end; ++y) {
+            auto *pixels = output.ptr<uchar>(y);
+            const auto *smooth = blurred.ptr<uchar>(y);
+            for (int i = 0; i < output.cols * 3; ++i) {
+                pixels[i] = sharpenScanChannel(pixels[i], smooth[i]);
+            }
+        }
+    });
     return output;
 }
 

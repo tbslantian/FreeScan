@@ -7,6 +7,9 @@ static void require(bool ok,const char *message) { if (!ok) throw std::runtime_e
 
 int main() {
     try {
+        require(freescan::sharpenScanChannel(101, 102) == 99, "Sharpening must truncate before byte saturation");
+        require(freescan::sharpenScanChannel(5, 200) == 0 &&
+                freescan::sharpenScanChannel(250, 20) == 255, "Sharpening did not saturate at byte limits");
         cv::Mat page(512,512,CV_8UC3);
         for (int y=0;y<512;++y) for (int x=0;x<512;++x) {
             uchar v=uchar(140+95*x/511.);page.at<cv::Vec3b>(y,x)=cv::Vec3b(v,v,v);

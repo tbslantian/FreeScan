@@ -50,11 +50,21 @@ int main() {
         std::vector<cv::Point> paper{{91, 40}, {540, 73}, {585, 397}, {51, 406}};
         cv::fillConvexPoly(page, paper, cv::Scalar(241, 241, 241));
         std::array<cv::Point2f, 4> points;
+        std::array<cv::Point2f, 4> referenceCorners;
         for (size_t i = 0; i < points.size(); ++i) {
             points[i] = {paper[i].x / 639.f, paper[i].y / 459.f};
+            referenceCorners[i] = cv::Point2f(paper[i]);
+        }
+        const auto referenceSize = freescan::rectifiedDocumentSize(referenceCorners, 640);
+        require(referenceSize == cv::Size(534, 388), "Rectification did not match the reference aspect ratio");
+        require(freescan::insetDocumentEdges(referenceCorners, referenceSize), "Corner inset failed");
+        const std::array<cv::Point2f, 4> expected{{{95.877f, 44.238f}, {535.149f, 76.523f},
+                                                  {579.135f, 393.219f}, {56.775f, 402.023f}}};
+        for (size_t i = 0; i < expected.size(); ++i) {
+            require(cv::norm(referenceCorners[i] - expected[i]) < .01, "Inset did not match original ARM64 output");
         }
         auto crop = freescan::rectifyDocument(page, points);
-        require(crop.cols == 535 && crop.rows == 369, "Rectification ignored opposing edge lengths");
+        require(crop.size() == referenceSize, "Rectification ignored reference output dimensions");
         require(cv::mean(crop)[0] > 237, "Rectified paper kept its surroundings");
         std::cout<<"All text deskew regression checks passed\n";
         return 0;
