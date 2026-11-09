@@ -7,6 +7,20 @@ static void require(bool ok,const char *message) { if (!ok) throw std::runtime_e
 
 int main() {
     try {
+        require(freescan::sharpenScanChannel(101, 102) == 99, "Sharpening must truncate before byte saturation");
+        require(freescan::sharpenScanChannel(5, 200) == 0 &&
+                freescan::sharpenScanChannel(250, 20) == 255, "Sharpening did not saturate at byte limits");
+        cv::Mat printedBlock(128, 192, CV_8UC3, cv::Scalar(223, 232, 239));
+        cv::rectangle(printedBlock, cv::Rect(68, 46, 56, 36), cv::Scalar(15, 18, 22), -1);
+        const auto paperField = freescan::scanPaperField(printedBlock);
+        require(paperField.size() == cv::Size(150, 100), "Paper field did not use the reference sampling grid");
+        const auto sampledPaper = paperField.at<cv::Vec3b>(20, 20);
+        require(sampledPaper == cv::Vec3b(211, 220, 227), "Paper seed attenuation differs from reference");
+        const auto reconstructedPaper = paperField.at<cv::Vec3b>(50, 75);
+        require(reconstructedPaper[0] > 190 && reconstructedPaper[1] > 195 && reconstructedPaper[2] > 200,
+                "A disconnected dark print region contaminated the paper field");
+        const auto preservedBlock = freescan::documentFilter(printedBlock, 8, true);
+        require(preservedBlock.at<cv::Vec3b>(64, 96)[0] < 30, "Enhancement bleached the dark print region");
         cv::Mat page(512,512,CV_8UC3);
         for (int y=0;y<512;++y) for (int x=0;x<512;++x) {
             uchar v=uchar(140+95*x/511.);page.at<cv::Vec3b>(y,x)=cv::Vec3b(v,v,v);
@@ -22,6 +36,16 @@ int main() {
         require(afterStd[0]<beforeStd[0]*.5,"Shadow correction did not flatten paper illumination");
         cv::Mat inkMask;cv::inRange(original,cv::Scalar(0,0,0),cv::Scalar(40,40,40),inkMask);
         require(cv::countNonZero(inkMask)>100 && cv::mean(flattened,inkMask)[0]<80,"Shadow correction destroyed dark text");
+        auto enhanced = freescan::documentFilter(page, 8, true);
+        auto soft = freescan::documentFilter(page, 9, true);
+        require(enhanced.type() == page.type() && enhanced.size() == page.size(), "Enhancement changed raster geometry");
+        require(enhanced.at<cv::Vec3b>(80, 80)[0] > 239 && cv::mean(enhanced, inkMask)[0] < 45,
+                "Enhancement failed to lift shaded paper or preserve ink");
+        require(soft.at<cv::Vec3b>(80, 80)[0] < enhanced.at<cv::Vec3b>(80, 80)[0] - 25,
+                "Soft mode lost its raw intensity component");
+        require(cv::norm(freescan::documentFilter(page, 10, true), freescan::legacyGray(enhanced), cv::NORM_INF) == 0,
+                "Enhanced grayscale did not convert the enhanced color result");
+        require(cv::norm(original, page, cv::NORM_INF) == 0, "Enhancement mutated its source");
         auto gray=freescan::documentFilter(page,1,true);
         require(gray.type()==CV_8UC1 && gray.size()==page.size(),"Grayscale type or size changed");
         cv::Mat blank(300,300,CV_8UC3,cv::Scalar(246,246,246));

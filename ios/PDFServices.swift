@@ -79,7 +79,14 @@ enum PDFServices {
     static func makePDF(from images: [UIImage], title: String = "FreeScan",
                         searchableText: [[RecognizedTextLine]]? = nil,
                         filename: String? = nil) throws -> URL {
-        guard !images.isEmpty else {
+        try makePDF(pageCount: images.count, title: title, searchableText: searchableText,
+                    filename: filename) { images[$0] }
+    }
+
+    static func makePDF(pageCount: Int, title: String = "FreeScan",
+                        searchableText: [[RecognizedTextLine]]? = nil,
+                        filename: String? = nil, imageAt: (Int) -> UIImage) throws -> URL {
+        guard pageCount > 0 else {
             throw NSError(domain: "FreeScan.PDF", code: 2,
                           userInfo: [NSLocalizedDescriptionKey: "没有可导出的页面。"])
         }
@@ -91,26 +98,31 @@ enum PDFServices {
         let minPageEdge: CGFloat = 215.9 * 72 / 25.4
         let pageBounds = CGRect(x: 0, y: 0, width: maxPageEdge, height: maxPageEdge)
         let renderer = UIGraphicsPDFRenderer(bounds: pageBounds)
-        let data = renderer.pdfData { context in
-            for (index, image) in images.enumerated() {
-                let imageWidth = max(1, image.size.width)
-                let imageHeight = max(1, image.size.height)
-                let longEdge = max(imageWidth, imageHeight)
-                let shortEdge = min(imageWidth, imageHeight)
-                let scale = min(1, min(maxPageEdge / longEdge, minPageEdge / shortEdge))
-                let pageSize = CGSize(width: imageWidth * scale, height: imageHeight * scale)
-                context.beginPage(withBounds: CGRect(origin: .zero, size: pageSize), pageInfo: [
-                    kCGPDFContextTitle as String: title,
-                    kCGPDFContextCreator as String: "FreeScan iOS",
-                ])
-                let fitted = AVMakeRect(aspectRatio: image.size, insideRect: CGRect(origin: .zero, size: pageSize))
-                image.draw(in: fitted)
-                if let searchableText, searchableText.indices.contains(index) {
-                    drawInvisibleText(searchableText[index], in: fitted, context: context.cgContext)
+        let temporary = documentsDirectory.appendingPathComponent(".freescan-\(UUID().uuidString).tmp")
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        try renderer.writePDF(to: temporary) { context in
+            for index in 0..<pageCount {
+                autoreleasepool {
+                    let image = imageAt(index)
+                    let imageWidth = max(1, image.size.width)
+                    let imageHeight = max(1, image.size.height)
+                    let longEdge = max(imageWidth, imageHeight)
+                    let shortEdge = min(imageWidth, imageHeight)
+                    let scale = min(1, min(maxPageEdge / longEdge, minPageEdge / shortEdge))
+                    let pageSize = CGSize(width: imageWidth * scale, height: imageHeight * scale)
+                    context.beginPage(withBounds: CGRect(origin: .zero, size: pageSize), pageInfo: [
+                        kCGPDFContextTitle as String: title,
+                        kCGPDFContextCreator as String: "FreeScan iOS",
+                    ])
+                    let fitted = AVMakeRect(aspectRatio: image.size, insideRect: CGRect(origin: .zero, size: pageSize))
+                    image.draw(in: fitted)
+                    if let searchableText, searchableText.indices.contains(index) {
+                        drawInvisibleText(searchableText[index], in: fitted, context: context.cgContext)
+                    }
                 }
             }
         }
-        try data.write(to: output, options: .atomic)
+        try FileManager.default.moveItem(at: temporary, to: output)
         try mirrorToConfiguredDirectory(output)
         return output
     }

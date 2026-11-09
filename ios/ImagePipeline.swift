@@ -6,6 +6,7 @@
 import CoreImage
 import CoreImage.CIFilterBuiltins
 import CoreText
+import CoreVideo
 import Foundation
 import UIKit
 import Vision
@@ -63,82 +64,46 @@ enum ImagePipeline {
         let format = UIGraphicsImageRendererFormat.default()
         format.scale = image.scale
         format.opaque = false
+        format.preferredRange = .standard
         return UIGraphicsImageRenderer(size: image.size, format: format).image { _ in
             image.draw(in: CGRect(origin: .zero, size: image.size))
         }
     }
 
-    /// Shared preview/export/print pipeline: flatten illumination before filtering.
+    /// Shared by preview, PDF, JPEG and print.
     static func filtered(_ image: UIImage, mode: ScanFilter, removeShadows: Bool = false) -> UIImage {
         let source = upright(image)
-        if mode == .original { return source }
-        let nativeMode: Int?
         switch mode {
-        case .color: nativeMode = 0
-        case .grayscale: nativeMode = 1
-        case .blackAndWhite: nativeMode = 2
-        case .automatic: nativeMode = 3
-        case .brighten: nativeMode = 5
-        case .localGrayscale: nativeMode = 7
-        default: nativeMode = nil
-        }
-        if let nativeMode {
-            return FreeScanOpenCV.filtered(source, mode: nativeMode, shadows: removeShadows) ?? source
-        }
-        // EnhanceImg's enhanced/soft paths still use Core Image approximations
-        // after common illumination correction; brightness/gray use native ports.
-        let image = removeShadows
-            ? (FreeScanOpenCV.filtered(source, mode: 4, shadows: true) ?? source) : source
-        guard let cgImage = image.cgImage else { return image }
-        let input = CIImage(cgImage: cgImage)
-        let controls = CIFilter.colorControls()
-        controls.inputImage = input
-        switch mode {
-        case .enhance:
-            controls.saturation = 0.92
-            controls.contrast = 1.32
-            controls.brightness = 0.035
-        case .localSoft:
-            controls.saturation = 0.96
-            controls.contrast = 1.16
-            controls.brightness = 0.035
+        case .original: return source
+        case .removeHandwriting: return removeColoredInk(source)
+        case .removeWatermark:
+            let candidates = qrCandidates(in: source).filter { candidate in
+                candidate.kind == .quarkFooter ||
+                    (candidate.kind == .verified && candidate.automaticallyRepairable &&
+                     (candidate.bounds.minY > 0.8 || candidate.bounds.maxY < 0.2))
+            }
+            return (try? repair(source, candidates: candidates)) ?? source
         default:
-            return image
-        }
-        guard var output = controls.outputImage else { return image }
-        let shadows = CIFilter.highlightShadowAdjust()
-        shadows.inputImage = output
-        shadows.shadowAmount = 0.35
-        shadows.highlightAmount = 0.85
-        output = shadows.outputImage ?? output
-        let sharpen = CIFilter.sharpenLuminance()
-        sharpen.inputImage = output
-        sharpen.sharpness = mode == .enhance ? 0.65 : 0.32
-        output = sharpen.outputImage ?? output
-        guard let result = ciContext.createCGImage(output, from: output.extent) else { return image }
-        return UIImage(cgImage: result, scale: image.scale, orientation: .up)
-    }
-
-    static func rotated(_ image: UIImage, clockwiseDegrees: Int) -> UIImage {
-        let radians = CGFloat(clockwiseDegrees) * .pi / 180
-        let size = CGSize(width: image.size.width, height: image.size.height)
-        let rotatedSize = CGRect(origin: .zero, size: size).applying(CGAffineTransform(rotationAngle: radians)).integral.size
-        let renderer = UIGraphicsImageRenderer(size: rotatedSize)
-        return renderer.image { context in
-            context.cgContext.translateBy(x: rotatedSize.width / 2, y: rotatedSize.height / 2)
-            context.cgContext.rotate(by: radians)
-            image.draw(in: CGRect(x: -size.width / 2, y: -size.height / 2, width: size.width, height: size.height))
+            return FreeScanOpenCV.filtered(source, mode: mode.nativeMode, shadows: removeShadows) ?? source
         }
     }
 
-    /// Shared capture/import path. Original mode and disabled auto-crop retain
-    /// their uncorrected geometry, matching Android's deskew opt-out behavior.
+    static func rotatedClockwise(_ image: UIImage) -> UIImage {
+        let source = upright(image)
+        guard let cgImage = source.cgImage else { return source }
+        return upright(UIImage(cgImage: cgImage, scale: source.scale, orientation: .right))
+    }
+
+    /// Keep the source frame so the proposed crop can be adjusted later.
     static func prepareScan(_ image: UIImage, autoCrop: Bool, maxDimension: Int,
-                            filter: ScanFilter) -> UIImage {
-        let cropped = autoCrop ? autoCropDocument(image) : upright(image)
-        let sized = resize(cropped, maxDimension: maxDimension)
-        guard autoCrop, filter != .original else { return sized }
-        return (try? deskewText(sized).image) ?? sized
+                            filter: ScanFilter, geometry: ScanGeometryPolicy = .document,
+                            bookPage: Bool = false) -> ScanPage {
+        let source = resize(image, maxDimension: maxDimension)
+        let quad = autoCrop ? detectDocumentQuad(source) : nil
+        let corrected = quad.flatMap { cropForScan(source, quad: $0, geometry: geometry) }
+        let result = corrected ?? refineGeometry(source, geometry: geometry, allowDewarp: bookPage)
+        return ScanPage(id: UUID(), original: source, image: result, filter: filter,
+                        cropQuad: corrected == nil ? nil : quad, geometry: geometry)
     }
 
     static func deskewText(_ image: UIImage) throws -> (image: UIImage, angle: Double) {
@@ -161,38 +126,71 @@ enum ImagePipeline {
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
         format.opaque = true
+        format.preferredRange = .standard
         return UIGraphicsImageRenderer(size: size, format: format).image { _ in
             normalized.draw(in: CGRect(origin: .zero, size: size))
         }
     }
 
-    /// Vision rectangle detection followed by Core Image perspective correction.
-    static func autoCropDocument(_ image: UIImage) -> UIImage {
-        let image = upright(image)
-        guard let cgImage = image.cgImage else { return image }
-        let request = VNDetectRectanglesRequest()
-        request.maximumObservations = 4
-        request.minimumConfidence = 0.45
-        request.minimumSize = 0.12
-        request.quadratureTolerance = 25
-        do {
-            try VNImageRequestHandler(cgImage: cgImage, orientation: .up).perform([request])
-        } catch {
-            return image
-        }
-        guard let rectangle = request.results?.max(by: { $0.boundingBox.width * $0.boundingBox.height < $1.boundingBox.width * $1.boundingBox.height }),
-              rectangle.boundingBox.width * rectangle.boundingBox.height > 0.08 else { return image }
+    private static func detectDocumentQuad(_ image: UIImage) -> DocumentQuad? {
+        guard let cgImage = image.cgImage else { return nil }
+        return detectDocumentEdges(CIImage(cgImage: cgImage)) ??
+            detectDocumentWithVision(VNImageRequestHandler(cgImage: cgImage, orientation: .up))
+    }
 
-        let input = CIImage(cgImage: cgImage)
-        let correction = CIFilter.perspectiveCorrection()
-        correction.inputImage = input
-        correction.topLeft = scaled(rectangle.topLeft, size: input.extent.size)
-        correction.topRight = scaled(rectangle.topRight, size: input.extent.size)
-        correction.bottomLeft = scaled(rectangle.bottomLeft, size: input.extent.size)
-        correction.bottomRight = scaled(rectangle.bottomRight, size: input.extent.size)
-        guard let output = correction.outputImage,
-              let result = ciContext.createCGImage(output, from: output.extent) else { return image }
-        return UIImage(cgImage: result, scale: image.scale, orientation: .up)
+    static func detectDocumentQuad(_ buffer: CVPixelBuffer, orientation: CGImagePropertyOrientation) -> DocumentQuad? {
+        let image = CIImage(cvPixelBuffer: buffer).oriented(orientation)
+        return detectDocumentEdges(image) ??
+            detectDocumentWithVision(VNImageRequestHandler(cvPixelBuffer: buffer, orientation: orientation))
+    }
+
+    private static func detectDocumentEdges(_ image: CIImage) -> DocumentQuad? {
+        let extent = image.extent
+        guard extent.width > 0, extent.height > 0 else { return nil }
+        let modelSize: CGFloat = 256
+        let input = image.transformed(by: CGAffineTransform(translationX: -extent.minX, y: -extent.minY))
+            .transformed(by: CGAffineTransform(scaleX: modelSize / extent.width, y: modelSize / extent.height))
+        let bounds = CGRect(x: 0, y: 0, width: modelSize, height: modelSize)
+        guard let sample = ciContext.createCGImage(input, from: bounds),
+              let corners = FreeScanOpenCV.documentCorners(sample), corners.count == 4 else { return nil }
+        let quad = DocumentQuad(topLeft: corners[0].cgPointValue, topRight: corners[1].cgPointValue,
+                                bottomRight: corners[2].cgPointValue, bottomLeft: corners[3].cgPointValue)
+        return quad.isValid ? quad : nil
+    }
+
+    private static func detectDocumentWithVision(_ handler: VNImageRequestHandler) -> DocumentQuad? {
+        let segmentation = VNDetectDocumentSegmentationRequest()
+        if (try? handler.perform([segmentation])) != nil,
+           let quad = segmentation.results?.compactMap(documentQuad).first {
+            return quad
+        }
+
+        let request = VNDetectRectanglesRequest()
+        request.maximumObservations = 6
+        request.minimumConfidence = 0.65
+        request.minimumSize = 0.24
+        request.minimumAspectRatio = 0.25
+        request.quadratureTolerance = 30
+        guard (try? handler.perform([request])) != nil else { return nil }
+        return request.results?.sorted { rectangleScore($0) > rectangleScore($1) }
+            .compactMap(documentQuad).first
+    }
+
+    private static func rectangleScore(_ observation: VNRectangleObservation) -> CGFloat {
+        let bounds = observation.boundingBox
+        return bounds.width * bounds.height * CGFloat(observation.confidence)
+    }
+
+    private static func documentQuad(_ observation: VNRectangleObservation) -> DocumentQuad? {
+        let bounds = observation.boundingBox
+        guard bounds.width * bounds.height >= 0.08,
+              bounds.width < 0.995 || bounds.height < 0.995 else { return nil }
+        func point(_ p: CGPoint) -> CGPoint {
+            CGPoint(x: min(1, max(0, p.x)), y: min(1, max(0, 1 - p.y)))
+        }
+        let quad = DocumentQuad(topLeft: point(observation.topLeft), topRight: point(observation.topRight),
+                                bottomRight: point(observation.bottomRight), bottomLeft: point(observation.bottomLeft))
+        return quad.isValid ? quad : nil
     }
 
     static func crop(_ image: UIImage, normalizedRect: CGRect) -> UIImage {
@@ -208,24 +206,25 @@ enum ImagePipeline {
         return UIImage(cgImage: result, scale: image.scale, orientation: .up)
     }
 
-    static func perspectiveCrop(_ image: UIImage, quad: DocumentQuad) -> UIImage {
-        let image = upright(image)
-        guard let cgImage = image.cgImage else { return image }
-        let input = CIImage(cgImage: cgImage)
-        let extent = input.extent
-        func ciPoint(_ point: CGPoint) -> CGPoint {
-            CGPoint(x: extent.minX + point.x * extent.width,
-                    y: extent.minY + (1 - point.y) * extent.height)
+    static func cropForScan(_ image: UIImage, quad: DocumentQuad, geometry: ScanGeometryPolicy? = nil) -> UIImage? {
+        guard quad.isValid,
+              let crop = FreeScanOpenCV.rectifyDocument(upright(image),
+                                                        corners: quad.points.map { NSValue(cgPoint: $0) }) else { return nil }
+        guard let geometry else { return (try? deskewText(crop).image) ?? crop }
+        return refineGeometry(crop, geometry: geometry, allowDewarp: true, allowDeskewFallback: true)
+    }
+
+    private static func refineGeometry(_ image: UIImage, geometry: ScanGeometryPolicy, allowDewarp: Bool,
+                                       allowDeskewFallback: Bool = false) -> UIImage {
+        let oriented: UIImage
+        if geometry.orientText {
+            let fallback = { allowDeskewFallback ? (try? deskewText(image).image) ?? image : image }
+            oriented = FreeScanOpenCV.orientDocument(image) ?? fallback()
+        } else {
+            oriented = image
         }
-        let correction = CIFilter.perspectiveCorrection()
-        correction.inputImage = input
-        correction.topLeft = ciPoint(quad.topLeft)
-        correction.topRight = ciPoint(quad.topRight)
-        correction.bottomLeft = ciPoint(quad.bottomLeft)
-        correction.bottomRight = ciPoint(quad.bottomRight)
-        guard let output = correction.outputImage,
-              let result = ciContext.createCGImage(output, from: output.extent) else { return image }
-        return UIImage(cgImage: result, scale: image.scale, orientation: .up)
+        guard geometry.flattenCurves && allowDewarp else { return oriented }
+        return FreeScanOpenCV.flattenDocument(oriented) ?? oriented
     }
 
     /// Same OpenCV 4.12 HSV mask, morphological close/dilation and Telea repair
@@ -362,9 +361,6 @@ enum ImagePipeline {
         return try await TesseractOCRRunner.shared.recognize(upright(image), path: config.path, languages: config.languages)
     }
 
-    private static func scaled(_ point: CGPoint, size: CGSize) -> CGPoint {
-        CGPoint(x: point.x * size.width, y: point.y * size.height)
-    }
 }
 
 private struct RGBAImage {

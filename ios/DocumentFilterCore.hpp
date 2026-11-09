@@ -3,15 +3,18 @@
 #pragma once
 #include <opencv2/opencv.hpp>
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include "LegacyDocumentFilterCore.hpp"
+#include "ScanPaperField.hpp"
 
 namespace freescan {
 // Port of imageprocessing/PostProcessing.kt. Core input/output uses BGR.
 inline cv::Mat bounded(const cv::Mat &input,double maxPixels,int interpolation=cv::INTER_AREA) {
     if (input.total()<=maxPixels) return input.clone();
     double factor=std::sqrt(maxPixels/input.total());
-    cv::Mat output;cv::resize(input,output,cv::Size(cvRound(input.cols*factor),cvRound(input.rows*factor)),0,0,interpolation);
+    cv::Mat output;cv::resize(input,output,cv::Size(std::max(1,cvRound(input.cols*factor)),
+                                                   std::max(1,cvRound(input.rows*factor))),0,0,interpolation);
     return output;
 }
 inline double histogramPercentile(const cv::Mat &input,double percentile) {
@@ -34,7 +37,8 @@ inline cv::Mat flattenIllumination(const cv::Mat &bgr,bool preserveColor,bool wh
     int maxDim=std::max(bgr.cols,bgr.rows),limit=std::max(128,maxDim/8);
     cv::Mat reduced,small,background;
     if (maxDim<=limit) reduced=luminance.clone();
-    else cv::resize(luminance,reduced,cv::Size(cvRound(luminance.cols*double(limit)/maxDim),cvRound(luminance.rows*double(limit)/maxDim)),0,0,cv::INTER_AREA);
+    else cv::resize(luminance,reduced,cv::Size(std::max(1,cvRound(luminance.cols*double(limit)/maxDim)),
+                                              std::max(1,cvRound(luminance.rows*double(limit)/maxDim))),0,0,cv::INTER_AREA);
     cv::GaussianBlur(reduced,small,cv::Size(31,31),0);
     cv::resize(small,background,luminance.size(),0,0,cv::INTER_CUBIC);
     double target=whitePaperTarget?242:std::clamp(histogramPercentile(background,.85),190.,248.);
@@ -163,9 +167,71 @@ inline bool containsDocumentColor(const cv::Mat &bgr) {
     return double(colored)/pixels>.0003;
 }
 
-// 0=color, 1=gray, 2=bitonal, 3=auto, 4=illumination-only,
-// 5=legacy brightness, 7=legacy gray.
+inline uchar sharpenScanChannel(int value, int blurred) {
+    return uchar(std::clamp((5 * value - 3 * blurred) / 2, 0, 255));
+}
+
+// The iOS reference uses a coarse paper field, two truncated byte tables and
+// unsharp masking. The global field keeps the app's shadow-removal switch.
+inline cv::Mat scanEnhancement(const cv::Mat &bgr, double softening, bool shadows) {
+    const int shortEdge = std::min(bgr.cols, bgr.rows);
+    if (shortEdge < 24) return legacyBrightness(bgr);
+    cv::Mat paper;
+    if (shadows) {
+        paper = scanPaperField(bgr);
+        if (paper.empty()) return legacyBrightness(bgr);
+    } else {
+        const double scale = std::min({1.0, 600.0 / shortEdge, 1800.0 / std::max(bgr.cols, bgr.rows)});
+        cv::Mat sample;
+        cv::resize(bgr, sample, cv::Size(std::max(1, cvRound(bgr.cols * scale)),
+                                        std::max(1, cvRound(bgr.rows * scale))), 0, 0, cv::INTER_AREA);
+        std::vector<cv::Mat> channels;
+        cv::split(sample, channels);
+        paper = cv::Mat(1, 1, CV_8UC3, cv::Scalar(
+            histogramPercentile(channels[0], .95), histogramPercentile(channels[1], .95),
+            histogramPercentile(channels[2], .95)));
+    }
+    cv::Mat luminance;
+    cv::cvtColor(paper, luminance, cv::COLOR_BGR2GRAY);
+    if (histogramPercentile(luminance, .75) < 45) return legacyBrightness(bgr);
+    cv::resize(paper, paper, bgr.size(), 0, 0, cv::INTER_LINEAR);
+
+    std::array<int, 256> raw{}, reflected{};
+    for (int i = 0; i < 256; ++i) {
+        raw[i] = int(i * softening);
+        reflected[i] = int(std::pow(i / 255.0, 2.5) * 253 * (1 - softening));
+    }
+    cv::Mat output(bgr.size(), bgr.type());
+    cv::parallel_for_(cv::Range(0, bgr.rows), [&](const cv::Range &rows) {
+        for (int y = rows.start; y < rows.end; ++y) {
+            const auto *src = bgr.ptr<uchar>(y);
+            const auto *background = paper.ptr<uchar>(y);
+            auto *dst = output.ptr<uchar>(y);
+            for (int i = 0; i < bgr.cols * 3; ++i) {
+                int ratio = background[i] == 0 ? src[i] : std::min(255, src[i] * 255 / background[i]);
+                dst[i] = uchar(raw[src[i]] + reflected[ratio]);
+            }
+        }
+    });
+    cv::Mat blurred;
+    cv::GaussianBlur(output, blurred, cv::Size(3, 3), 1);
+    cv::parallel_for_(cv::Range(0, output.rows), [&](const cv::Range &rows) {
+        for (int y = rows.start; y < rows.end; ++y) {
+            auto *pixels = output.ptr<uchar>(y);
+            const auto *smooth = blurred.ptr<uchar>(y);
+            for (int i = 0; i < output.cols * 3; ++i) {
+                pixels[i] = sharpenScanChannel(pixels[i], smooth[i]);
+            }
+        }
+    });
+    return output;
+}
+
+// 0=color, 1=gray, 2=bitonal, 3=auto, 4=illumination-only, 5=brightness,
+// 7=legacy grayscale, 8=enhanced color, 9=soft color, 10=enhanced grayscale.
 inline cv::Mat documentFilter(const cv::Mat &bgr,int mode,bool shadows) {
+    if (mode == 10) return legacyGray(scanEnhancement(bgr, 0, shadows));
+    if (mode == 8 || mode == 9) return scanEnhancement(bgr, mode == 9 ? .5 : 0, shadows);
     if (mode==3) mode=containsDocumentColor(bgr)?0:1;
     cv::Mat working=shadows?flattenIllumination(bgr,mode!=1 && mode!=2,mode==0):bgr.clone();
     if (mode==2) return binaryDocument(working);

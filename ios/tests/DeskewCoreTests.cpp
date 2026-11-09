@@ -1,6 +1,7 @@
 /* Copyright 2025-2026 The FairScan authors
  * SPDX-License-Identifier: GPL-3.0-or-later */
 #include "../DeskewCore.hpp"
+#include "../DocumentGeometryCore.hpp"
 #include <iostream>
 #include <stdexcept>
 
@@ -33,6 +34,38 @@ int main() {
         cv::Mat small(300,300,CV_8UC4,cv::Scalar(200,210,220,255)); double applied=99;
         cv::Mat unchanged=freescan::deskewText(small,applied);
         require(applied==0 && cv::norm(small,unchanged,cv::NORM_INF)==0,"Small image must remain unchanged");
+        cv::Mat text(920, 760, CV_8U, cv::Scalar(232));
+        for (int y = 100; y < 830; y += 48) {
+            cv::putText(text, "EXAM PRINTED PAGE 1234", {100, y}, cv::FONT_HERSHEY_SIMPLEX, .85, cv::Scalar(25), 2);
+        }
+        auto tilted = cv::getRotationMatrix2D(cv::Point2f(380, 460), -2.7, 1);
+        cv::warpAffine(text, text, tilted, text.size(), cv::INTER_LINEAR, cv::BORDER_REPLICATE);
+        auto angle = freescan::glyphBaselineAngle(text);
+        require(angle && std::abs(*angle - 2.7) < .45, "Disconnected text did not produce a usable baseline");
+        auto corrected = freescan::deskewText(text, applied);
+        require(std::abs(applied - 2.7) < .45 && std::abs(freescan::textLineAngle(corrected)) < .5,
+                "Glyph baseline correction left tilted print");
+
+        cv::Mat page(460, 640, CV_8UC3, cv::Scalar(25, 25, 25));
+        std::vector<cv::Point> paper{{91, 40}, {540, 73}, {585, 397}, {51, 406}};
+        cv::fillConvexPoly(page, paper, cv::Scalar(241, 241, 241));
+        std::array<cv::Point2f, 4> points;
+        std::array<cv::Point2f, 4> referenceCorners;
+        for (size_t i = 0; i < points.size(); ++i) {
+            points[i] = {paper[i].x / 639.f, paper[i].y / 459.f};
+            referenceCorners[i] = cv::Point2f(paper[i]);
+        }
+        const auto referenceSize = freescan::rectifiedDocumentSize(referenceCorners, 640);
+        require(referenceSize == cv::Size(534, 388), "Rectification did not match the reference aspect ratio");
+        require(freescan::insetDocumentEdges(referenceCorners, referenceSize), "Corner inset failed");
+        const std::array<cv::Point2f, 4> expected{{{95.877f, 44.238f}, {535.149f, 76.523f},
+                                                  {579.135f, 393.219f}, {56.775f, 402.023f}}};
+        for (size_t i = 0; i < expected.size(); ++i) {
+            require(cv::norm(referenceCorners[i] - expected[i]) < .01, "Inset did not match original ARM64 output");
+        }
+        auto crop = freescan::rectifyDocument(page, points);
+        require(crop.size() == referenceSize, "Rectification ignored reference output dimensions");
+        require(cv::mean(crop)[0] > 237, "Rectified paper kept its surroundings");
         std::cout<<"All text deskew regression checks passed\n";
         return 0;
     } catch (const std::exception &error) { std::cerr<<error.what()<<'\n';return 1; }

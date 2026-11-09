@@ -7,9 +7,15 @@
 #import "FreeScanOpenCV.h"
 #include "QRRepairCore.hpp"
 #include "DeskewCore.hpp"
-#include "DocumentFilterCore.hpp"
+#include "DocumentGeometryCore.hpp"
+#include "DocumentEdgeCore.hpp"
+#include "CamScannerEdgeCore.hpp"
+#include "CamScannerDewarpCore.hpp"
+#include "CamScannerFilterCore.hpp"
+#include "ReferenceScanModels.hpp"
 #include <algorithm>
 #include <cmath>
+#include <mutex>
 
 @implementation FreeScanDeskewResult
 - (instancetype)initWithImage:(UIImage *)image angle:(double)angle {
@@ -147,11 +153,50 @@ static std::vector<int> tileStarts(int length) {
     return starts;
 }
 
-static cv::Mat rgbaImage(UIImage *image) {
-    cv::Mat rgba;
-    UIImageToMat(image, rgba, true);
+static cv::Mat rgbaImage(CGImageRef source) {
+    if (!source) return {};
+
+    // The input profile may be wide-gamut, extended-range or monochrome.
+    // OpenCV always expects the same 8-bit RGBA layout here.
+    cv::Mat rgba(int(CGImageGetHeight(source)), int(CGImageGetWidth(source)), CV_8UC4, cv::Scalar(0, 0, 0, 0));
+    CGColorSpaceRef colorSpace = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+    if (!colorSpace) return {};
+    CGContextRef context = CGBitmapContextCreate(rgba.data, rgba.cols, rgba.rows, 8, rgba.step[0],
+        colorSpace, kCGBitmapByteOrder32Big | kCGImageAlphaPremultipliedLast);
+    CGColorSpaceRelease(colorSpace);
+    if (!context) return {};
+
+    CGContextDrawImage(context, CGRectMake(0, 0, rgba.cols, rgba.rows), source);
+    CGContextRelease(context);
     return rgba;
 }
+
+static cv::Mat rgbaImage(UIImage *image) {
+    return rgbaImage(image.CGImage);
+}
+
+#if FREESCAN_USE_MNN
+static NSString *referenceModelPath(NSString *name) {
+    return [NSBundle.mainBundle pathForResource:name ofType:@"mnn" inDirectory:@"ReferenceScan"];
+}
+
+static UIImage *scanImage(const cv::Mat &pixels, UIImage *source) {
+    UIImage *result = MatToUIImage(pixels);
+    return result.CGImage ? [UIImage imageWithCGImage:result.CGImage scale:source.scale
+                                         orientation:UIImageOrientationUp] : nil;
+}
+
+static std::optional<freescan::EdgeQuad> referenceDocumentCorners(const cv::Mat &rgba) {
+    static freescan::ReferenceScanModel model(referenceModelPath(@"border").fileSystemRepresentation);
+    constexpr int side = 240;
+    cv::Mat sample;
+    cv::resize(rgba, sample, {side, side}, 0, 0, cv::INTER_LINEAR);
+    cv::cvtColor(sample, sample, cv::COLOR_RGBA2BGR);
+    auto prediction = model.run(sample, "output", {1, 2, side, side}, 1.0f / 255.0f);
+    if (prediction.empty()) return std::nullopt;
+    return freescan::fitCamScannerDocumentEdges(cv::Mat(side, side, CV_32FC1, prediction.data()));
+}
+#endif
 
 static UIImage *repairedImage(cv::Mat &rgba, const cv::Rect &roi,
                               const cv::Mat &mask, double radius) {
@@ -164,12 +209,55 @@ static UIImage *repairedImage(cv::Mat &rgba, const cv::Rect &roi,
 }
 
 @implementation FreeScanOpenCV
++ (NSArray<NSValue *> *)documentCorners:(CGImageRef)image {
+    try {
+        auto rgba = rgbaImage(image);
+        if (rgba.empty()) return nil;
+        std::optional<freescan::EdgeQuad> quad;
+#if FREESCAN_USE_MNN
+        quad = referenceDocumentCorners(rgba);
+#endif
+        if (!quad) {
+            static cv::dnn::Net fallback = [] {
+                NSString *path = [NSBundle.mainBundle pathForResource:@"ScanEdgeModel" ofType:@"onnx"];
+                return path ? cv::dnn::readNetFromONNX(path.fileSystemRepresentation) : cv::dnn::Net();
+            }();
+            static std::mutex fallbackMutex;
+            cv::Mat rgb;
+            cv::cvtColor(rgba, rgb, cv::COLOR_RGBA2RGB);
+            std::lock_guard<std::mutex> guard(fallbackMutex);
+            quad = freescan::detectDocumentEdges(fallback, rgb);
+        }
+        if (!quad) return nil;
+        NSMutableArray<NSValue *> *points = [NSMutableArray arrayWithCapacity:4];
+        for (const auto &point : *quad)
+            [points addObject:[NSValue valueWithCGPoint:CGPointMake(point.x, point.y)]];
+        return points;
+    } catch (const std::exception &error) {
+        NSLog(@"FreeScan edge detection failed: %s", error.what());
+        return nil;
+    }
+}
 + (UIImage *)filteredImage:(UIImage *)image mode:(NSInteger)mode shadows:(BOOL)shadows {
     try {
         cv::Mat rgba=rgbaImage(image),bgr,result;
         if (rgba.empty()) return nil;
         cv::cvtColor(rgba,bgr,cv::COLOR_RGBA2BGR);rgba.release();
-        auto filtered=freescan::documentFilter(bgr,int(mode),shadows);
+        cv::Mat filtered;
+#if FREESCAN_USE_MNN
+        using freescan::ScanFilterMode;
+        const auto filter = static_cast<ScanFilterMode>(mode);
+        if (filter == ScanFilterMode::ShadowRemoval || filter == ScanFilterMode::SmartHD) {
+            static freescan::ReferenceScanModel model(referenceModelPath(@"shadow").fileSystemRepresentation);
+            filtered = freescan::referenceShadowCorrection(model, bgr);
+            if (!filtered.empty()) {
+                if (filter == ScanFilterMode::SmartHD) filtered = freescan::scanSmartHD(filtered);
+                else freescan::sharpenScanEdges(filtered);
+            }
+        }
+#endif
+        if (filtered.empty()) filtered = freescan::camScannerFilter(bgr,int(mode),shadows);
+        if (filtered.empty()) return nil;
         cv::cvtColor(filtered,result,filtered.channels()==1?cv::COLOR_GRAY2RGBA:cv::COLOR_BGR2RGBA);
         return MatToUIImage(result);
     } catch (const std::exception &error) {
@@ -186,6 +274,79 @@ static UIImage *repairedImage(cv::Mat &rgba, const cv::Rect &roi,
     } catch (const std::exception &error) {
         NSLog(@"FreeScan text deskew failed: %s",error.what());return nil;
     }
+}
++ (UIImage *)rectifyDocument:(UIImage *)image corners:(NSArray<NSValue *> *)corners {
+    if (corners.count != 4) return nil;
+    try {
+        std::array<cv::Point2f, 4> points;
+        for (NSUInteger i = 0; i < points.size(); ++i) {
+            CGPoint p = corners[i].CGPointValue;
+            points[i] = cv::Point2f(float(p.x), float(p.y));
+        }
+        auto rectified = freescan::rectifyDocument(rgbaImage(image), points);
+        if (rectified.empty()) return nil;
+        auto result = MatToUIImage(rectified);
+        return result.CGImage ? [UIImage imageWithCGImage:result.CGImage scale:image.scale orientation:UIImageOrientationUp] : nil;
+    } catch (const std::exception &error) {
+        NSLog(@"FreeScan document rectification failed: %s", error.what());
+        return nil;
+    }
+}
++ (BOOL)hasReferenceDewarpModel {
+#if FREESCAN_USE_MNN
+    return referenceModelPath(@"dewarp-b") != nil;
+#else
+    return NO;
+#endif
+}
++ (UIImage *)orientDocument:(UIImage *)image {
+#if FREESCAN_USE_MNN
+    try {
+        constexpr int side = 512;
+        static freescan::ReferenceScanModel model(referenceModelPath(@"direction").fileSystemRepresentation);
+        auto rgba = rgbaImage(image);
+        if (rgba.empty()) return nil;
+        cv::Mat sample;
+        cv::resize(rgba, sample, {side, side}, 0, 0, cv::INTER_LINEAR);
+        cv::cvtColor(sample, sample, cv::COLOR_RGBA2BGR);
+        const auto scores = model.run(sample, "175", {1, 5}, 1.0f / 128.0f, -1.0f);
+        if (scores.empty()) return nil;
+        const auto best = std::max_element(scores.begin(), scores.end());
+        const auto id = best - scores.begin();
+        // The IPA reads a configuration threshold. This local threshold avoids low-confidence turns.
+        if (*best < .75f || id < 1 || id > 3) return image;
+        const int rotations[]{cv::ROTATE_90_COUNTERCLOCKWISE, cv::ROTATE_180, cv::ROTATE_90_CLOCKWISE};
+        cv::Mat rotated;
+        cv::rotate(rgba, rotated, rotations[id - 1]);
+        return scanImage(rotated, image);
+    } catch (const std::exception &error) {
+        NSLog(@"FreeScan page direction failed: %s", error.what());
+    }
+#endif
+    return nil;
+}
++ (UIImage *)flattenDocument:(UIImage *)image {
+#if FREESCAN_USE_MNN
+    try {
+        constexpr int side = 240;
+        static freescan::ReferenceScanModel model(referenceModelPath(@"dewarp-b").fileSystemRepresentation);
+        auto rgba = rgbaImage(image);
+        if (rgba.empty()) return nil;
+        cv::Mat bgr;
+        cv::cvtColor(rgba, bgr, cv::COLOR_RGBA2BGR);
+        const auto sample = freescan::dewarpInput(bgr);
+        auto prediction = model.run(sample, "output", {1, 2, side, side}, 1.0f / 255.0f);
+        if (prediction.empty()) return nil;
+        cv::Mat flow;
+        cv::merge(std::vector<cv::Mat>{cv::Mat(side, side, CV_32FC1, prediction.data()),
+                                      cv::Mat(side, side, CV_32FC1, prediction.data() + side * side)}, flow);
+        auto flattened = freescan::dewarpDocument(rgba, flow);
+        return flattened.empty() ? nil : scanImage(flattened, image);
+    } catch (const std::exception &error) {
+        NSLog(@"FreeScan curved-page correction failed: %s", error.what());
+    }
+#endif
+    return nil;
 }
 + (NSArray<FreeScanQRCodeCandidate *> *)qrCandidates:(UIImage *)image {
     NSMutableArray<FreeScanQRCodeCandidate *> *output = [NSMutableArray array];

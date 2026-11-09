@@ -9,20 +9,21 @@ on:
   workflow_dispatch:
     inputs:
       delivery:
-        description: 'Delivery: unsigned-device-test requires local Apple signing before installation'
+        description: 'Device test builds require local Apple signing. Reference builds also take local scan models.'
         required: true
         type: choice
         default: app-store-connect
         options:
           - app-store-connect
           - unsigned-device-test
+          - reference-device-test
 
 permissions:
   contents: read
 
 jobs:
   build:
-    name: ${{ inputs.delivery == 'unsigned-device-test' && 'Build unsigned iPhone/iPad test IPA (local signing required)' || 'Archive and export signed iPhone/iPad IPA' }}
+    name: ${{ (inputs.delivery == 'unsigned-device-test' || inputs.delivery == 'reference-device-test') && 'Build unsigned iPhone/iPad test IPA (local signing required)' || 'Archive and export signed iPhone/iPad IPA' }}
     runs-on: macos-15
     timeout-minutes: 45
     env:
@@ -31,6 +32,7 @@ jobs:
       IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
       IOS_TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
       IOS_BUNDLE_ID: ${{ secrets.IOS_BUNDLE_ID }}
+      IOS_DELIVERY: ${{ inputs.delivery }}
     steps:
       - name: Check out source
         uses: actions/checkout@v7
@@ -68,12 +70,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          build_options=()
+          if [ "$IOS_DELIVERY" = reference-device-test ]; then
+            bash ios/build-reference-scan.sh --runtime-only
+            build_options=(-xcconfig ios/.build/camscanner-models/Enabled.xcconfig)
+          fi
           xcodebuild \
             -project ios/FreeScan.xcodeproj \
             -scheme FreeScan \
             -configuration Release \
             -destination 'generic/platform=iOS' \
             -derivedDataPath "$RUNNER_TEMP/FreeScanDerivedData" \
+            "${build_options[@]}" \
             CODE_SIGNING_ALLOWED=NO \
             CURRENT_PROJECT_VERSION="$GITHUB_RUN_NUMBER" \
             build
@@ -84,7 +92,7 @@ jobs:
           set -euo pipefail
           framework=$(find "$RUNNER_TEMP/FreeScanDerivedData/SourcePackages/artifacts" -type d -path '*/macos-*/opencv2.framework' -print -quit)
           test -n "$framework"
-          for native_test in QRRepairCoreTests DeskewCoreTests DocumentFilterCoreTests LegacyDocumentFilterCoreTests; do
+          for native_test in QRRepairCoreTests DeskewCoreTests DocumentFilterCoreTests LegacyDocumentFilterCoreTests DocumentEdgeCoreTests CamScannerFilterCoreTests CamScannerDewarpCoreTests; do
             xcrun clang++ -std=c++17 "ios/tests/$native_test.cpp" \
               -F "$(dirname "$framework")" -framework opencv2 \
               -framework Accelerate -framework AVFoundation -framework CoreImage \
@@ -132,14 +140,18 @@ jobs:
       - name: Verify device-only package inputs
         run: |
           python3 -B -m unittest discover -s ios/tests -p test_device_package.py
+          cmp ios/ScanEdgeModel.onnx "$RUNNER_TEMP/FreeScanDerivedData/Build/Products/Release-iphoneos/FreeScan.app/ScanEdgeModel.onnx"
           python3 ios/package_device_test.py --verify-only "$RUNNER_TEMP/FreeScanDerivedData/Build/Products/Release-iphoneos/FreeScan.app"
 
       - name: Package unsigned device-test IPA for local signing
-        if: github.event_name == 'workflow_dispatch' && inputs.delivery == 'unsigned-device-test'
+        if: github.event_name == 'workflow_dispatch' && (inputs.delivery == 'unsigned-device-test' || inputs.delivery == 'reference-device-test')
         run: |
           python3 ios/package_device_test.py \
             "$RUNNER_TEMP/FreeScanDerivedData/Build/Products/Release-iphoneos/FreeScan.app" \
             "$RUNNER_TEMP/FreeScanDeviceTest"
+          if [ "$IOS_DELIVERY" = reference-device-test ]; then
+            echo 'This build supports locally supplied reference models. See ios/porting/CAMSCANNER_IOS_PORT.md before signing.' >> "$RUNNER_TEMP/FreeScanDeviceTest/READ-ME-FIRST.txt"
+          fi
           {
             echo '### Unsigned iPhone/iPad device-test package'
             echo 'The IPA requires local Apple signing before installation. It cannot be installed directly or uploaded to TestFlight/App Store.'
@@ -147,16 +159,16 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload unsigned device-test IPA and instructions
-        if: github.event_name == 'workflow_dispatch' && inputs.delivery == 'unsigned-device-test'
+        if: github.event_name == 'workflow_dispatch' && (inputs.delivery == 'unsigned-device-test' || inputs.delivery == 'reference-device-test')
         uses: actions/upload-artifact@v6
         with:
-          name: FreeScan-iOS-Unsigned-Device-Test-${{ github.run_number }}
+          name: ${{ inputs.delivery == 'reference-device-test' && 'FreeScan-iOS-Reference-Runtime' || 'FreeScan-iOS-Unsigned-Device-Test' }}-${{ github.run_number }}
           path: ${{ runner.temp }}/FreeScanDeviceTest/*
           if-no-files-found: error
           retention-days: 14
 
       - name: Validate Apple signing secrets
-        if: inputs.delivery != 'unsigned-device-test'
+        if: inputs.delivery != 'unsigned-device-test' && inputs.delivery != 'reference-device-test'
         shell: bash
         run: |
           set -euo pipefail
@@ -168,7 +180,7 @@ jobs:
           done
 
       - name: Install Apple distribution signing assets
-        if: inputs.delivery != 'unsigned-device-test'
+        if: inputs.delivery != 'unsigned-device-test' && inputs.delivery != 'reference-device-test'
         shell: bash
         run: |
           set -euo pipefail
@@ -237,7 +249,7 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Archive for iPhone and iPad
-        if: inputs.delivery != 'unsigned-device-test'
+        if: inputs.delivery != 'unsigned-device-test' && inputs.delivery != 'reference-device-test'
         shell: bash
         run: |
           set -euo pipefail
@@ -257,7 +269,7 @@ jobs:
             archive
 
       - name: Export App Store Connect IPA
-        if: inputs.delivery != 'unsigned-device-test'
+        if: inputs.delivery != 'unsigned-device-test' && inputs.delivery != 'reference-device-test'
         shell: bash
         run: |
           set -euo pipefail
@@ -288,7 +300,7 @@ jobs:
           cp "$ipa" "$GITHUB_WORKSPACE/FreeScan-iOS-${GITHUB_RUN_NUMBER}.ipa"
 
       - name: Upload signed IPA
-        if: inputs.delivery != 'unsigned-device-test'
+        if: inputs.delivery != 'unsigned-device-test' && inputs.delivery != 'reference-device-test'
         uses: actions/upload-artifact@v6
         with:
           name: FreeScan-iOS-IPA
@@ -297,7 +309,7 @@ jobs:
           retention-days: 14
 
       - name: Remove signing assets
-        if: always() && inputs.delivery != 'unsigned-device-test'
+        if: always() && inputs.delivery != 'unsigned-device-test' && inputs.delivery != 'reference-device-test'
         shell: bash
         run: |
           security delete-keychain "$RUNNER_TEMP/freescan-signing.keychain-db" 2>/dev/null || true

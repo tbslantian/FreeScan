@@ -30,9 +30,11 @@ struct FreeScanTabs: View {
 
 struct HomeView: View {
     @EnvironmentObject private var library: ScanLibrary
-    @State private var showScanner = false
-    @State private var showCertificates = false
+    @State private var cameraMode: ScanCameraMode?
+    @State private var editorPageID: UUID?
+    @State private var showScanEditor = false
     @State private var selectedPhotos: [PhotosPickerItem] = []
+    @State private var isImportingPhotos = false
     @State private var showPDFImporter = false
     var body: some View {
         NavigationStack {
@@ -42,7 +44,7 @@ struct HomeView: View {
                         Text("FreeScan").font(.largeTitle.bold())
                         Text("本地扫描、整理并导出文档").foregroundStyle(.secondary)
                     }
-                    Button { showScanner = true } label: {
+                    Button { cameraMode = .document } label: {
                         Label("开始扫描", systemImage: "camera.fill").font(.title3.bold())
                             .frame(maxWidth: .infinity).padding(.vertical, 18)
                     }.buttonStyle(.borderedProminent)
@@ -50,9 +52,14 @@ struct HomeView: View {
                         PhotosPicker(selection: $selectedPhotos, maxSelectionCount: 20, matching: .images) {
                             FeatureCardLabel(title: "相册导入", subtitle: "扫描图片", icon: "photo")
                         }.buttonStyle(.plain)
-                        Button { showCertificates = true } label: {
+                        Button { cameraMode = .certificate } label: {
                             FeatureCardLabel(title: "证件扫描", subtitle: "九种实时取景模板", icon: "person.text.rectangle")
                         }.buttonStyle(.plain)
+                        if FreeScanOpenCV.hasReferenceDewarpModel() {
+                            Button { cameraMode = .book } label: {
+                                FeatureCardLabel(title: "书页扫描", subtitle: "单页曲面展平", icon: "book")
+                            }.buttonStyle(.plain)
+                        }
                         NavigationLink { WatermarkToolView() } label: {
                             FeatureCardLabel(title: "二维码/水印", subtitle: "本地检测与区域修复", icon: "qrcode")
                         }.buttonStyle(.plain)
@@ -63,7 +70,7 @@ struct HomeView: View {
                             FeatureCardLabel(title: "PDF 编辑", subtitle: "导入、调整页面并导出", icon: "doc.richtext")
                         }.buttonStyle(.plain)
                         NavigationLink { ScanEditorView() } label: {
-                            FeatureCardLabel(title: "当前扫描", subtitle: "\(library.pages.count) 页 · 裁边、滤镜、OCR", icon: "square.stack.3d.up")
+                            FeatureCardLabel(title: "当前扫描", subtitle: "\(library.pages.count) 页 · 裁边、滤镜、导出", icon: "square.stack.3d.up")
                         }.buttonStyle(.plain)
                     }
                     Button { showPDFImporter = true } label: {
@@ -72,16 +79,33 @@ struct HomeView: View {
                 }.padding()
             }
             .navigationTitle("FreeScan").navigationBarTitleDisplayMode(.inline)
-            .sheet(isPresented: $showScanner) { ScanCameraView(mode: .document) }
-            .sheet(isPresented: $showCertificates) { CertificateScanView() }
+            .disabled(isImportingPhotos)
+            .overlay {
+                if isImportingPhotos {
+                    ProgressView("正在处理扫描…").padding().background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                }
+            }
+            .fullScreenCover(item: $cameraMode, onDismiss: {
+                if editorPageID != nil { showScanEditor = true }
+            }) { mode in
+                ScanCameraView(mode: mode) { editorPageID = $0 }
+            }
+            .navigationDestination(isPresented: $showScanEditor) {
+                ScanEditorView(initialPageID: editorPageID)
+            }
+            .onChange(of: showScanEditor) { _, isShowing in
+                if !isShowing { editorPageID = nil }
+            }
             .onChange(of: selectedPhotos) { _, items in
                 guard !items.isEmpty else { return }
                 selectedPhotos = []
+                isImportingPhotos = true
                 Task {
                     let autoCrop = UserDefaults.standard.object(forKey: "autoCropEnabled") as? Bool ?? true
                     let resolution = CameraResolutionPreset(
                         rawValue: UserDefaults.standard.string(forKey: "scanResolution") ?? "4K") ?? .fourK
                     let selectedFilter = ScanFilter(rawValue: UserDefaults.standard.string(forKey: "defaultFilter") ?? "") ?? .automatic
+                    var firstPageID: UUID?
                     for item in items {
                         guard let data = try? await item.loadTransferable(type: Data.self),
                               let image = UIImage(data: data) else { continue }
@@ -90,6 +114,12 @@ struct HomeView: View {
                                                       maxDimension: resolution.maxDimension, filter: selectedFilter)
                         }.value
                         library.add(processed)
+                        if firstPageID == nil { firstPageID = processed.id }
+                    }
+                    isImportingPhotos = false
+                    if let firstPageID {
+                        editorPageID = firstPageID
+                        showScanEditor = true
                     }
                 }
             }
@@ -123,7 +153,11 @@ struct FeatureCardLabel: View {
     }
 }
 
-enum ScanCameraMode: Equatable { case document, certificate }
+enum ScanCameraMode: Hashable, Identifiable {
+    case document, certificate, book
+
+    var id: Self { self }
+}
 
 struct ScanCameraView: View {
     @EnvironmentObject private var library: ScanLibrary
@@ -133,13 +167,19 @@ struct ScanCameraView: View {
     @State private var template = CertificateTemplate.all[0]
     @State private var isBackSide = false
     @State private var photoItems: [PhotosPickerItem] = []
-    @State private var capturedPreview: UIImage?
+    @State private var pendingCertificatePage: ScanPage?
+    @State private var isPreparingPages = false
+    @State private var firstAddedPageID: UUID?
     let mode: ScanCameraMode
+    let onFinish: (UUID) -> Void
 
     var body: some View {
         NavigationStack {
             ZStack {
-                CameraPreview(session: camera.session, detectedDocument: camera.detectedDocument).ignoresSafeArea()
+                CameraPreview(session: camera.session,
+                              detectedDocument: autoCropEnabled ? camera.detectedDocument : nil,
+                              onRotationChange: camera.updateRotation)
+                    .ignoresSafeArea()
                 VStack(spacing: 16) {
                     HStack {
                         Menu {
@@ -195,6 +235,11 @@ struct ScanCameraView: View {
                     } else {
                         GuideOverlay(aspect: 0.72).padding(.horizontal, 36)
                     }
+                    if mode == .book {
+                        Text("将单张书页对准取景框")
+                            .font(.footnote).padding(8).foregroundStyle(.white)
+                            .background(.black.opacity(0.5), in: Capsule())
+                    }
                     Spacer()
                     HStack {
                         if mode == .certificate {
@@ -213,57 +258,86 @@ struct ScanCameraView: View {
                             Image(systemName: "photo").font(.title2).foregroundStyle(.white)
                         }.accessibilityLabel("相册导入，可多选")
                     }.padding(.horizontal, 28).padding(.bottom, 24)
+                        .disabled(isPreparingPages || camera.isCapturing)
                 }.padding(.top, 18)
-                if let capturedPreview {
+                if let pendingCertificatePage {
                     VStack(spacing: 12) {
-                        Text(mode == .certificate ? "检查证件照片" : "检查扫描结果")
+                        Text("检查证件照片")
                             .font(.headline).foregroundStyle(.white)
-                        Image(uiImage: capturedPreview)
+                        Image(uiImage: pendingCertificatePage.image)
                             .resizable().scaledToFit().frame(maxWidth: .infinity, maxHeight: .infinity)
                             .padding(.horizontal, 12)
                         HStack(spacing: 16) {
-                            Button("重拍") { self.capturedPreview = nil }
+                            Button("重拍") { self.pendingCertificatePage = nil }
                                 .buttonStyle(.bordered).tint(.white)
-                            Button(mode == .certificate ? "使用此面" : "添加页面") { acceptCapture() }
+                            Button("使用此面") { acceptCertificatePage() }
+                                .buttonStyle(.bordered).tint(.white)
+                            Button("完成并编辑") { acceptCertificatePage(); finishScan() }
                                 .buttonStyle(.borderedProminent).tint(.green)
                         }.padding(.bottom, 22)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(Color.black.ignoresSafeArea())
                 }
+                if isPreparingPages {
+                    ProgressView("正在处理扫描…").tint(.white).foregroundStyle(.white)
+                        .padding().background(.black.opacity(0.8), in: RoundedRectangle(cornerRadius: 12))
+                }
             }
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) { Button("返回") { dismiss() }.foregroundStyle(.white) }
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("返回") { dismiss() }.foregroundStyle(.white)
+                        .disabled(isPreparingPages || camera.isCapturing)
+                }
                 ToolbarItem(placement: .topBarTrailing) {
-                    if mode == .certificate {
-                        HStack(spacing: 14) {
+                    HStack(spacing: 14) {
+                        if mode == .certificate {
                             Toggle("自动裁边", isOn: $autoCropEnabled).labelsHidden().tint(.green)
-                            Button("完成 (\(library.pages.count))") { dismiss() }.foregroundStyle(.white)
                         }
-                    } else {
-                        Button("完成 (\(library.pages.count))") { dismiss() }.foregroundStyle(.white)
+                        if firstAddedPageID != nil || pendingCertificatePage != nil {
+                            Button("完成 (\(library.pages.count + (pendingCertificatePage == nil ? 0 : 1)))") {
+                                acceptCertificatePage()
+                                finishScan()
+                            }.foregroundStyle(.white).disabled(isPreparingPages || camera.isCapturing)
+                        }
                     }
                 }
             }
             .toolbarBackground(.black.opacity(0.72), for: .navigationBar).toolbarBackground(.visible, for: .navigationBar)
             .onAppear { camera.start() }.onDisappear { camera.stop() }
-            .cameraShutterEvents(isEnabled: camera.isReady && capturedPreview == nil) {
-                guard capturedPreview == nil else { return }
+            .onChange(of: autoCropEnabled, initial: true) { _, enabled in camera.setDetectionEnabled(enabled) }
+            .cameraShutterEvents(isEnabled: camera.isReady && pendingCertificatePage == nil && !isPreparingPages && !camera.isCapturing) {
+                guard pendingCertificatePage == nil, !isPreparingPages else { return }
                 camera.capture()
             }
             .onChange(of: camera.capturedImage) { _, image in
                 guard let image else { return }
-                capturedPreview = image
                 camera.capturedImage = nil
+                isPreparingPages = true
+                camera.setDetectionEnabled(false)
+                Task {
+                    let page = await preparePage(image)
+                    isPreparingPages = false
+                    if mode == .certificate {
+                        pendingCertificatePage = page
+                        camera.setDetectionEnabled(autoCropEnabled)
+                    } else {
+                        appendScannedPage(page)
+                        onFinish(page.id)
+                        dismiss()
+                    }
+                }
             }
             .onChange(of: photoItems) { _, items in
-                guard !items.isEmpty else { return }
+                guard !items.isEmpty, !isPreparingPages else { return }
                 photoItems = []
+                isPreparingPages = true
                 Task {
+                    defer { isPreparingPages = false }
                     for item in items {
                         guard let data = try? await item.loadTransferable(type: Data.self),
                               let image = UIImage(data: data) else { continue }
-                        await appendScannedImage(image)
+                        appendScannedPage(await preparePage(image))
                     }
                 }
             }
@@ -273,20 +347,32 @@ struct ScanCameraView: View {
         }
     }
 
-    private func acceptCapture() {
-        guard let image = capturedPreview else { return }
-        capturedPreview = nil
-        Task { await appendScannedImage(image) }
+    private func acceptCertificatePage() {
+        guard let pendingCertificatePage else { return }
+        appendScannedPage(pendingCertificatePage)
+        self.pendingCertificatePage = nil
     }
 
-    private func appendScannedImage(_ image: UIImage) async {
+    private func finishScan() {
+        if let firstAddedPageID { onFinish(firstAddedPageID) }
+        dismiss()
+    }
+
+    private func preparePage(_ image: UIImage) async -> ScanPage {
         let shouldCrop = autoCropEnabled
         let maxDimension = camera.resolution.maxDimension
         let selectedFilter = ScanFilter(rawValue: UserDefaults.standard.string(forKey: "defaultFilter") ?? "") ?? .automatic
-        let processed = await Task.detached(priority: .userInitiated) {
-            ImagePipeline.prepareScan(image, autoCrop: shouldCrop, maxDimension: maxDimension, filter: selectedFilter)
+        let geometry: ScanGeometryPolicy = mode == .certificate ? .certificate : .document
+        let bookPage = mode == .book
+        return await Task.detached(priority: .userInitiated) {
+            ImagePipeline.prepareScan(image, autoCrop: shouldCrop, maxDimension: maxDimension,
+                                      filter: selectedFilter, geometry: geometry, bookPage: bookPage)
         }.value
-        library.add(processed)
+    }
+
+    private func appendScannedPage(_ page: ScanPage) {
+        library.add(page)
+        if firstAddedPageID == nil { firstAddedPageID = page.id }
         if mode == .certificate { isBackSide.toggle() }
     }
 }
@@ -398,10 +484,6 @@ private func drawCertificateArtwork(_ template: CertificateTemplate, in rect: CG
     context.stroke(path, with: .color(.white.opacity(0.82)), lineWidth: detailWidth)
 }
 
-struct CertificateScanView: View {
-    var body: some View { ScanCameraView(mode: .certificate) }
-}
-
 struct ScanEditorView: View {
     @EnvironmentObject private var library: ScanLibrary
     @State private var selectedID: UUID?
@@ -410,15 +492,23 @@ struct ScanEditorView: View {
     @State private var showOCR = false
     @State private var recognizedText = ""
     @State private var isRecognizing = false
+    @State private var exportProgress: String?
+    @State private var exportNotice: String?
     @State private var shareFile: ShareFile?
     @State private var errorText: String?
     @State private var exportFilename = ""
     @State private var isDeskewing = false
     @State private var deskewMessage: String?
-    @AppStorage("defaultFilter") private var defaultFilterRaw = ScanFilter.color.rawValue
+    @AppStorage("defaultFilter") private var defaultFilter = ScanFilter.automatic
     @AppStorage("removeShadowsEnabled") private var removeShadowsEnabled = true
     @AppStorage("exportFormat") private var exportFormat = "PDF"
+    @AppStorage("ocrEnabled") private var ocrEnabled = false
     @State private var previewImage: UIImage?
+
+    init(initialPageID: UUID? = nil) {
+        _selectedID = State(initialValue: initialPageID)
+    }
+
     private var current: ScanPage? { library.pages.first(where: { $0.id == selectedID }) ?? library.pages.first }
     private var previewTaskID: String {
         guard let current else { return "none" }
@@ -477,16 +567,20 @@ struct ScanEditorView: View {
                                 }
                             }.padding(.horizontal)
                         }
-                        Toggle("去阴影", isOn: $removeShadowsEnabled).padding(.horizontal)
+                        if filter.supportsShadowOverlay {
+                            Toggle("叠加去阴影", isOn: $removeShadowsEnabled).padding(.horizontal)
+                        }
+                        if filter == .removeHandwriting {
+                            Text("处理可识别的彩色笔迹")
+                                .font(.caption).foregroundStyle(.secondary)
+                        } else if filter == .removeWatermark {
+                            Text("处理已识别的页边二维码或夸克页脚水印")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
                         HStack {
                             Button { showCrop = true } label: { Label("手动裁边", systemImage: "crop.rotate") }
                             Spacer()
                             Button { rotate(current) } label: { Label("旋转", systemImage: "rotate.right") }
-                            Spacer()
-                            Button { Task { await runOCR(current) } } label: {
-                                if isRecognizing { ProgressView("识别中…") }
-                                else { Label("OCR", systemImage: "text.viewfinder") }
-                            }.disabled(isRecognizing)
                         }.buttonStyle(.bordered).padding(.horizontal)
                         Button { deskew(current) } label: {
                             if isDeskewing { ProgressView("正在校正文字行…") }
@@ -505,7 +599,23 @@ struct ScanEditorView: View {
                                 if exportFormat == "JPEG" { exportJPEG() } else { exportPDF() }
                             }.buttonStyle(.borderedProminent)
                             Button("打印") { printPDF() }.buttonStyle(.bordered)
-                        }.padding(.bottom, 8)
+                        }.disabled(exportProgress != nil || isRecognizing)
+                        if ocrEnabled {
+                            Menu {
+                                Button("识别本页文字") { Task { await runOCR(current) } }
+                                Button("生成可搜索 PDF") { exportPDF(searchable: true) }
+                            } label: {
+                                Label("文字识别（OCR）", systemImage: "text.viewfinder")
+                            }.disabled(exportProgress != nil || isRecognizing)
+                        }
+                        if let exportProgress {
+                            ProgressView(exportProgress).font(.caption)
+                        } else if isRecognizing {
+                            ProgressView("正在识别本页文字…").font(.caption)
+                        }
+                        if let exportNotice {
+                            Text(exportNotice).font(.caption).foregroundStyle(.secondary)
+                        }
                     }.padding(.top, 8)
                 }
             }
@@ -513,7 +623,7 @@ struct ScanEditorView: View {
             .disabled(isDeskewing)
             .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("清空") { library.clear(); selectedID = nil } } }
             .onAppear {
-                filter = current?.filter ?? ScanFilter(rawValue: defaultFilterRaw) ?? .automatic
+                filter = current?.filter ?? defaultFilter
             }
             .onChange(of: selectedID) { _, _ in
                 if let current { filter = current.filter }
@@ -530,7 +640,8 @@ struct ScanEditorView: View {
                 let selectedFilter = filter
                 let shouldRemoveShadows = removeShadowsEnabled
                 let result = await Task.detached(priority: .userInitiated) {
-                    ImagePipeline.filtered(source, mode: selectedFilter, removeShadows: shouldRemoveShadows)
+                    let displayImage = ImagePipeline.resize(source, maxDimension: 1600)
+                    return ImagePipeline.filtered(displayImage, mode: selectedFilter, removeShadows: shouldRemoveShadows)
                 }.value
                 guard !Task.isCancelled, requestID == previewTaskID else { return }
                 previewImage = result
@@ -571,7 +682,13 @@ struct ScanEditorView: View {
         selectedID = library.pages.indices.contains(currentIndex) ? library.pages[currentIndex].id : nil
     }
     private func rotate(_ page: ScanPage) {
-        library.update(page.id) { $0.image = ImagePipeline.rotated($0.image, clockwiseDegrees: 90); $0.original = $0.image }
+        library.update(page.id) {
+            let original = ImagePipeline.rotatedClockwise($0.original)
+            $0.image = $0.image === $0.original ? original : ImagePipeline.rotatedClockwise($0.image)
+            $0.original = original
+            $0.cropQuad = $0.cropQuad?.rotatedClockwise()
+            $0.recognizedText = nil
+        }
     }
     private func deskew(_ page: ScanPage) {
         guard !isDeskewing else { return }
@@ -584,7 +701,8 @@ struct ScanEditorView: View {
                 }.value
                 if result.angle != 0 {
                     library.update(page.id) {
-                        $0.image = result.image; $0.original = result.image; $0.recognizedText = nil
+                        $0.image = result.image
+                        $0.recognizedText = nil
                     }
                     deskewMessage = String(format: "已校正 %.2f° 的文字行倾斜", abs(result.angle))
                 } else {
@@ -595,40 +713,61 @@ struct ScanEditorView: View {
         }
     }
     private func runOCR(_ page: ScanPage) async {
-        guard !isRecognizing else { return }
+        guard ocrEnabled, !isRecognizing, exportProgress == nil else { return }
         isRecognizing = true
         defer { isRecognizing = false }
         do {
             let language = UserDefaults.standard.string(forKey: "ocrLanguage") ?? "zh-Hans"
             let text = try await ImagePipeline.recognizeText(page.image, language: language)
-            guard current?.id == page.id else { return }
+            guard ocrEnabled, current?.id == page.id else { return }
             recognizedText = text
             showOCR = true
         } catch { errorText = error.localizedDescription }
     }
-    private func exportPDF() {
+    private func exportPDF(searchable: Bool = false) {
+        guard exportProgress == nil, !isRecognizing, !searchable || ocrEnabled else { return }
         let source = library.pages.map { ($0.image, $0.filter) }
         let shouldRemoveShadows = removeShadowsEnabled
-        let language = UserDefaults.standard.string(forKey: "ocrLanguage") ?? "zh-Hans"
         let filename = exportFilename.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : exportFilename
+        exportProgress = "正在生成 PDF…"
+        exportNotice = nil
         Task {
+            defer { exportProgress = nil }
             do {
+                if !searchable {
+                    let url = try await Task.detached(priority: .userInitiated) {
+                        try PDFServices.makePDF(pageCount: source.count, filename: filename) { index in
+                            let page = source[index]
+                            return ImagePipeline.filtered(page.0, mode: page.1, removeShadows: shouldRemoveShadows)
+                        }
+                    }.value
+                    shareFile = ShareFile(url: url)
+                    return
+                }
+                let language = UserDefaults.standard.string(forKey: "ocrLanguage") ?? "zh-Hans"
                 let processed = await Task.detached(priority: .userInitiated) {
                     source.map { page in
                         ImagePipeline.filtered(page.0, mode: page.1, removeShadows: shouldRemoveShadows)
                     }
                 }.value
                 var recognizedPages = [[RecognizedTextLine]]()
-                for image in processed {
+                var failedPages = 0
+                for (index, image) in processed.enumerated() {
+                    exportProgress = "正在识别第 \(index + 1) / \(processed.count) 页…"
                     do {
                         recognizedPages.append(try await ImagePipeline.recognizeTextLines(image, language: language))
                     } catch {
-                        NSLog("FreeScan export OCR failed for a page: %@", error.localizedDescription as NSString)
+                        failedPages += 1
                         recognizedPages.append([])
                     }
                 }
-                shareFile = ShareFile(url: try PDFServices.makePDF(
-                    from: processed, searchableText: recognizedPages, filename: filename))
+                exportProgress = "正在写入 PDF…"
+                let text = recognizedPages
+                let url = try await Task.detached(priority: .userInitiated) {
+                    try PDFServices.makePDF(from: processed, searchableText: text, filename: filename)
+                }.value
+                if failedPages > 0 { exportNotice = "\(failedPages) 页未能识别文字，已保留页面图像。" }
+                shareFile = ShareFile(url: url)
             } catch { errorText = error.localizedDescription }
         }
     }
@@ -683,22 +822,35 @@ struct ManualCropView: View {
     @EnvironmentObject private var library: ScanLibrary
     @Environment(\.dismiss) private var dismiss
     let page: ScanPage
-    @State private var corners = [
-        CGPoint(x: 0.03, y: 0.03), CGPoint(x: 0.97, y: 0.03),
-        CGPoint(x: 0.97, y: 0.97), CGPoint(x: 0.03, y: 0.97),
-    ]
+    @State private var corners: [CGPoint]
     @State private var activeCorner: Int?
     @State private var dragStart: CGPoint?
+    @State private var isApplying = false
+    @State private var cropFailed = false
+
+    init(page: ScanPage) {
+        self.page = page
+        _corners = State(initialValue: page.cropQuad?.points ?? [
+            CGPoint(x: 0.03, y: 0.03), CGPoint(x: 0.97, y: 0.03),
+            CGPoint(x: 0.97, y: 0.97), CGPoint(x: 0.03, y: 0.97),
+        ])
+    }
+
+    private var quad: DocumentQuad {
+        DocumentQuad(topLeft: corners[0], topRight: corners[1],
+                     bottomRight: corners[2], bottomLeft: corners[3])
+    }
+
     var body: some View {
         NavigationStack {
             VStack(spacing: 12) {
                 Text("拖动四个绿色控制点，对齐纸张四角")
                     .font(.footnote).foregroundStyle(.secondary)
                 GeometryReader { proxy in
-                    let fitted = AVMakeRect(aspectRatio: page.image.size,
+                    let fitted = AVMakeRect(aspectRatio: page.original.size,
                                             insideRect: CGRect(origin: .zero, size: proxy.size))
                     ZStack {
-                        Image(uiImage: page.image).resizable().scaledToFit()
+                        Image(uiImage: page.original).resizable().scaledToFit()
                         Canvas { context, _ in
                             guard corners.count == 4, let first = corners.first else { return }
                             func screenPoint(_ point: CGPoint) -> CGPoint {
@@ -709,7 +861,7 @@ struct ManualCropView: View {
                             path.move(to: screenPoint(first))
                             corners.dropFirst().forEach { path.addLine(to: screenPoint($0)) }
                             path.closeSubpath()
-                            context.stroke(path, with: .color(.green), lineWidth: 3)
+                            context.stroke(path, with: .color(quad.isValid ? .green : .orange), lineWidth: 3)
                         }
                         ForEach(corners.indices, id: \.self) { index in
                             Circle()
@@ -736,21 +888,41 @@ struct ManualCropView: View {
                                     })
                         }
                     }
-                }.frame(maxHeight: 360)
-                Spacer()
+                }.disabled(isApplying)
+                if isApplying { ProgressView("正在裁边…") }
             }.padding().navigationTitle("手动裁边")
+                .interactiveDismissDisabled(isApplying)
                 .toolbar {
-                    ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("取消") { dismiss() }.disabled(isApplying)
+                    }
                     ToolbarItem(placement: .confirmationAction) {
-                        Button("应用") {
-                            let quad = DocumentQuad(topLeft: corners[0], topRight: corners[1],
-                                                    bottomRight: corners[2], bottomLeft: corners[3])
-                            let cropped = ImagePipeline.perspectiveCrop(page.image, quad: quad)
-                            library.update(page.id) { $0.image = cropped; $0.original = cropped }
-                            dismiss()
-                        }
+                        Button("应用") { applyCrop() }.disabled(isApplying || !quad.isValid)
                     }
                 }
+                .alert("无法应用裁边，请调整控制点后重试。", isPresented: $cropFailed) {
+                    Button("好", role: .cancel) {}
+                }
+        }
+    }
+
+    private func applyCrop() {
+        let cropQuad = quad
+        let original = page.original
+        let geometry = page.geometry
+        isApplying = true
+        Task {
+            let cropped = await Task.detached(priority: .userInitiated) {
+                ImagePipeline.cropForScan(original, quad: cropQuad, geometry: geometry)
+            }.value
+            isApplying = false
+            guard let cropped else { cropFailed = true; return }
+            library.update(page.id) {
+                $0.image = cropped
+                $0.cropQuad = cropQuad
+                $0.recognizedText = nil
+            }
+            dismiss()
         }
     }
 }
@@ -1543,10 +1715,12 @@ struct HandwritingToolView: View {
 
 struct SettingsView: View {
     @AppStorage("autoCropEnabled") private var autoCropEnabled = true
+    @AppStorage("scanAutoOrientText") private var scanAutoOrientText = true
     @AppStorage("removeShadowsEnabled") private var removeShadowsEnabled = true
-    @AppStorage("defaultFilter") private var defaultFilter = ScanFilter.automatic.rawValue
+    @AppStorage("defaultFilter") private var defaultFilter = ScanFilter.automatic
     @AppStorage("ocrLanguage") private var ocrLanguage = "zh-Hans"
     @AppStorage("ocrEngine") private var ocrEngine = "vision"
+    @AppStorage("ocrEnabled") private var ocrEnabled = false
     @AppStorage("exportQuality") private var exportQuality = 0.92
     @AppStorage("scanResolution") private var scanResolution = CameraResolutionPreset.fourK.rawValue
     @AppStorage("exportFormat") private var exportFormat = "PDF"
@@ -1558,9 +1732,10 @@ struct SettingsView: View {
             Form {
                 Section("扫描") {
                     Toggle("默认自动裁边", isOn: $autoCropEnabled)
+                    Toggle("按文字方向旋转整页", isOn: $scanAutoOrientText)
                     Toggle("默认去阴影", isOn: $removeShadowsEnabled)
                     Picker("默认滤镜", selection: $defaultFilter) {
-                        ForEach(ScanFilter.allCases) { Text($0.rawValue).tag($0.rawValue) }
+                        ForEach(ScanFilter.allCases) { Text($0.rawValue).tag($0) }
                     }
                     Picker("扫描分辨率", selection: $scanResolution) {
                         ForEach(CameraResolutionPreset.allCases) { preset in
@@ -1591,6 +1766,9 @@ struct SettingsView: View {
                     }
                 }
                 Section("文字识别") {
+                    Toggle("启用文字识别（OCR）", isOn: $ocrEnabled)
+                    Text("开启后，在页面编辑中手动识别本页文字或生成可搜索 PDF。")
+                        .font(.caption).foregroundStyle(.secondary)
                     Picker("OCR 引擎", selection: $ocrEngine) {
                         Text("Apple Vision").tag("vision")
                         Text("Tesseract（本地语言包）").tag("tesseract")
