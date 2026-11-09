@@ -31,4 +31,12 @@ python3 ios/package_device_test.py \
 
 产物在 `ios/.build/reference-ipa`，是待签名的 ARM64 真机测试 IPA。直接安装前需要用 Apple 账户签名。TestFlight 和 App Store 使用 Apple 分发证书和匹配的描述文件执行归档与导出，并在构建归档时沿用上述 `-xcconfig`。
 
-普通 GitHub Actions 构建使用开源回退路径。它采用新的透视和滤镜代码，参考模型版需要持有 IPA 的 macOS 构建环境。
+## 用 GitHub Actions 编译，再在本机打包
+
+手动运行 `iOS IPA`，选择 `reference-device-test`。该任务用 macOS 构建包含 MNN 运行时的 ARM64 真机包，输出 `FreeScan-iOS-Reference-Runtime-<构建号>`。解压下载的产物，再用下面的命令把四个经过校验的参考模型补进 IPA。这一步可在 Windows 执行。
+
+```powershell
+python ios/porting/finalize_reference_ipa.py "FreeScan-iOS-device-test-unsigned-<构建号>.ipa" "FreeScan-iOS-Reference-unsigned.ipa" --reference-ipa "C:/path/to/CamScanner-IPAOMTK.COM.ipa"
+```
+
+签名时选择本机补齐模型后的 IPA。GitHub 运行时产物保留开源回退路径，模型和最终含权重的 IPA 留在本机。

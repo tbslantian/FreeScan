@@ -43,7 +43,7 @@ cmake --build "$work/iphoneos-$revision" --target MNN --parallel 4
 cmake --install "$work/iphoneos-$revision"
 test -f "$prefix/lib/libMNN.a"
 test -f "$prefix/include/MNN/Interpreter.hpp"
-cp "$source/LICENSE" "$prefix/MNN-LICENSE.txt"
+cp "$source/LICENSE.txt" "$prefix/MNN-LICENSE.txt"
 
 cat >"$root/.build/camscanner-models/Enabled.xcconfig" <<'CONFIG'
 FREESCAN_USE_MNN = YES
