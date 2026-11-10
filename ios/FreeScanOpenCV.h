@@ -20,7 +20,8 @@ NS_ASSUME_NONNULL_BEGIN
 + (nullable UIImage *)filteredImage:(UIImage *)image mode:(NSInteger)mode shadows:(BOOL)shadows
     NS_SWIFT_NAME(filtered(_:mode:shadows:));
 + (nullable FreeScanDeskewResult *)deskewText:(UIImage *)image NS_SWIFT_NAME(deskewText(_:));
-+ (nullable NSArray<NSValue *> *)documentCorners:(CGImageRef)image NS_SWIFT_NAME(documentCorners(_:));
++ (nullable NSArray<NSValue *> *)documentCorners:(CGImageRef)image preview:(BOOL)preview
+    refineContour:(BOOL)refineContour NS_SWIFT_NAME(documentCorners(_:preview:refineContour:));
 + (nullable UIImage *)rectifyDocument:(UIImage *)image corners:(NSArray<NSValue *> *)corners
     NS_SWIFT_NAME(rectifyDocument(_:corners:));
 + (nullable UIImage *)orientDocument:(UIImage *)image NS_SWIFT_NAME(orientDocument(_:));

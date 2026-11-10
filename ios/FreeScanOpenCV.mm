@@ -12,6 +12,7 @@
 #include "CamScannerEdgeCore.hpp"
 #include "CamScannerDewarpCore.hpp"
 #include "CamScannerFilterCore.hpp"
+#include "CamScannerHDCore.hpp"
 #include "ReferenceScanModels.hpp"
 #include <algorithm>
 #include <cmath>
@@ -186,15 +187,40 @@ static UIImage *scanImage(const cv::Mat &pixels, UIImage *source) {
                                          orientation:UIImageOrientationUp] : nil;
 }
 
-static std::optional<freescan::EdgeQuad> referenceDocumentCorners(const cv::Mat &rgba) {
+static std::optional<freescan::EdgeQuad> referenceDocumentCorners(const cv::Mat &rgba, bool preview) {
     static freescan::ReferenceScanModel model(referenceModelPath(@"border").fileSystemRepresentation);
     constexpr int side = 240;
-    cv::Mat sample;
-    cv::resize(rgba, sample, {side, side}, 0, 0, cv::INTER_LINEAR);
-    cv::cvtColor(sample, sample, cv::COLOR_RGBA2BGR);
+    constexpr int analysisLimit = 416;
+    cv::Mat bgr, sample;
+    cv::cvtColor(rgba, bgr, cv::COLOR_RGBA2BGR);
+    const auto longest = std::max(bgr.cols, bgr.rows);
+    if (longest > analysisLimit) {
+        const double scale = double(analysisLimit) / longest;
+        const cv::Size size(std::max(1, cvRound(bgr.cols * scale)),
+                            std::max(1, cvRound(bgr.rows * scale)));
+        cv::resize(bgr, bgr, size, 0, 0, cv::INTER_AREA);
+    }
+    if (preview) {
+        cv::Mat hsv;
+        cv::cvtColor(bgr, hsv, cv::COLOR_BGR2HSV);
+        if (cv::mean(hsv)[2] < 30) return std::nullopt;
+    }
+    cv::resize(bgr, sample, {side, side}, 0, 0, cv::INTER_LINEAR);
     auto prediction = model.run(sample, "output", {1, 2, side, side}, 1.0f / 255.0f);
     if (prediction.empty()) return std::nullopt;
-    return freescan::fitCamScannerDocumentEdges(cv::Mat(side, side, CV_32FC1, prediction.data()));
+    return freescan::fitCamScannerDocumentEdges(
+        cv::Mat(side, side, CV_32FC1, prediction.data()), bgr.size());
+}
+
+static std::optional<freescan::EdgeQuad> referenceContour(const cv::Mat &rgba,
+                                                        const freescan::EdgeQuad &quad) {
+    static freescan::ReferenceScanModel model(referenceModelPath(@"curve-line").fileSystemRepresentation);
+    constexpr int side = freescan::dewarpModelSize;
+    cv::Mat bgr;
+    cv::cvtColor(rgba, bgr, cv::COLOR_RGBA2BGR);
+    auto prediction = model.run(freescan::contourInput(bgr), "output", {1, 1, side, side}, 1.0f / 255.0f);
+    if (prediction.empty()) return std::nullopt;
+    return freescan::refineDocumentContour(cv::Mat(side, side, CV_32FC1, prediction.data()), quad);
 }
 #endif
 
@@ -209,15 +235,18 @@ static UIImage *repairedImage(cv::Mat &rgba, const cv::Rect &roi,
 }
 
 @implementation FreeScanOpenCV
-+ (NSArray<NSValue *> *)documentCorners:(CGImageRef)image {
++ (NSArray<NSValue *> *)documentCorners:(CGImageRef)image preview:(BOOL)preview
+    refineContour:(BOOL)refineContour {
     try {
         auto rgba = rgbaImage(image);
         if (rgba.empty()) return nil;
         std::optional<freescan::EdgeQuad> quad;
+        const char *edgeStage = "PageScan model";
 #if FREESCAN_USE_MNN
-        quad = referenceDocumentCorners(rgba);
+        quad = referenceDocumentCorners(rgba, preview);
 #endif
         if (!quad) {
+            edgeStage = "HED fallback";
             static cv::dnn::Net fallback = [] {
                 NSString *path = [NSBundle.mainBundle pathForResource:@"ScanEdgeModel" ofType:@"onnx"];
                 return path ? cv::dnn::readNetFromONNX(path.fileSystemRepresentation) : cv::dnn::Net();
@@ -229,6 +258,15 @@ static UIImage *repairedImage(cv::Mat &rgba, const cv::Rect &roi,
             quad = freescan::detectDocumentEdges(fallback, rgb);
         }
         if (!quad) return nil;
+#if FREESCAN_USE_MNN
+        if (refineContour) {
+            if (auto contour = referenceContour(rgba, *quad)) {
+                quad = contour;
+                NSLog(@"FreeScan scan contour stage: curve model accepted");
+            }
+        }
+#endif
+        if (!preview) NSLog(@"FreeScan scan edge stage: %s", edgeStage);
         NSMutableArray<NSValue *> *points = [NSMutableArray arrayWithCapacity:4];
         for (const auto &point : *quad)
             [points addObject:[NSValue valueWithCGPoint:CGPointMake(point.x, point.y)]];
@@ -247,13 +285,22 @@ static UIImage *repairedImage(cv::Mat &rgba, const cv::Rect &roi,
 #if FREESCAN_USE_MNN
         using freescan::ScanFilterMode;
         const auto filter = static_cast<ScanFilterMode>(mode);
-        if (filter == ScanFilterMode::ShadowRemoval || filter == ScanFilterMode::SmartHD) {
+        if (filter == ScanFilterMode::SmartHD) {
+            static freescan::ReferenceScanModel shadow(referenceModelPath(@"shadow").fileSystemRepresentation);
+            static freescan::ReferenceScanModel scanOld(referenceModelPath(@"magic-scan-old").fileSystemRepresentation);
+            static freescan::ReferenceScanModel scanNew(referenceModelPath(@"magic-scan-new").fileSystemRepresentation);
+            static freescan::ReferenceScanModel scanAlt(referenceModelPath(@"magic-scan-alt").fileSystemRepresentation);
+            static freescan::ReferenceScanModel radar(referenceModelPath(@"magic-radar").fileSystemRepresentation);
+            try {
+                filtered = freescan::androidSmartHD(bgr, shadow, scanOld, scanNew, scanAlt, radar);
+            } catch (const std::exception &error) {
+                NSLog(@"FreeScan reference Smart HD failed: %s", error.what());
+            }
+            NSLog(@"FreeScan Smart HD stage: %s", filtered.empty() ? "local fallback" : "Android model chain");
+        } else if (filter == ScanFilterMode::ShadowRemoval) {
             static freescan::ReferenceScanModel model(referenceModelPath(@"shadow").fileSystemRepresentation);
             filtered = freescan::referenceShadowCorrection(model, bgr);
-            if (!filtered.empty()) {
-                if (filter == ScanFilterMode::SmartHD) filtered = freescan::scanSmartHD(filtered);
-                else freescan::sharpenScanEdges(filtered);
-            }
+            if (!filtered.empty()) freescan::sharpenScanEdges(filtered);
         }
 #endif
         if (filtered.empty()) filtered = freescan::camScannerFilter(bgr,int(mode),shadows);
@@ -341,6 +388,7 @@ static UIImage *repairedImage(cv::Mat &rgba, const cv::Rect &roi,
         cv::merge(std::vector<cv::Mat>{cv::Mat(side, side, CV_32FC1, prediction.data()),
                                       cv::Mat(side, side, CV_32FC1, prediction.data() + side * side)}, flow);
         auto flattened = freescan::dewarpDocument(rgba, flow);
+        NSLog(@"FreeScan scan dewarp stage: %s", flattened.empty() ? "perspective result retained" : "model applied");
         return flattened.empty() ? nil : scanImage(flattened, image);
     } catch (const std::exception &error) {
         NSLog(@"FreeScan curved-page correction failed: %s", error.what());

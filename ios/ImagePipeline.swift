@@ -98,12 +98,27 @@ enum ImagePipeline {
     static func prepareScan(_ image: UIImage, autoCrop: Bool, maxDimension: Int,
                             filter: ScanFilter, geometry: ScanGeometryPolicy = .document,
                             bookPage: Bool = false) -> ScanPage {
-        let source = resize(image, maxDimension: maxDimension)
-        let quad = autoCrop ? detectDocumentQuad(source) : nil
+        var geometry = geometry
+        geometry.outputMaxDimension = maxDimension
+        // The output tier is applied after geometry. Bound exceptional imports separately
+        // so a single 48 MP frame cannot overwhelm the page editor or native warp.
+        let source = scanSource(image)
+        let quad = autoCrop ? detectDocumentQuad(source, refineContour: geometry.flattenCurves) : nil
         let corrected = quad.flatMap { cropForScan(source, quad: $0, geometry: geometry) }
-        let result = corrected ?? refineGeometry(source, geometry: geometry, allowDewarp: bookPage)
+        let result = corrected ?? resize(
+            refineGeometry(source, geometry: geometry, allowDewarp: bookPage),
+            maxDimension: maxDimension
+        )
         return ScanPage(id: UUID(), original: source, image: result, filter: filter,
                         cropQuad: corrected == nil ? nil : quad, geometry: geometry)
+    }
+
+    private static func scanSource(_ image: UIImage) -> UIImage {
+        guard let cg = image.cgImage else { return upright(image) }
+        let area = Double(cg.width) * Double(cg.height)
+        let longest = Double(max(cg.width, cg.height))
+        let cap = min(8000, longest * min(1, (24_000_000 / max(area, 1)).squareRoot()))
+        return resize(image, maxDimension: max(2, Int(cap)))
     }
 
     static func deskewText(_ image: UIImage) throws -> (image: UIImage, angle: Double) {
@@ -132,27 +147,34 @@ enum ImagePipeline {
         }
     }
 
-    private static func detectDocumentQuad(_ image: UIImage) -> DocumentQuad? {
+    private static func detectDocumentQuad(_ image: UIImage, refineContour: Bool) -> DocumentQuad? {
         guard let cgImage = image.cgImage else { return nil }
-        return detectDocumentEdges(CIImage(cgImage: cgImage)) ??
-            detectDocumentWithVision(VNImageRequestHandler(cgImage: cgImage, orientation: .up))
+        if let corners = detectDocumentEdges(CIImage(cgImage: cgImage), preview: false,
+                                              refineContour: refineContour) { return corners }
+        let corners = detectDocumentWithVision(VNImageRequestHandler(cgImage: cgImage, orientation: .up))
+        NSLog("FreeScan scan edge stage: %@", corners == nil ? "no document" : "Vision fallback")
+        return corners
     }
 
     static func detectDocumentQuad(_ buffer: CVPixelBuffer, orientation: CGImagePropertyOrientation) -> DocumentQuad? {
         let image = CIImage(cvPixelBuffer: buffer).oriented(orientation)
-        return detectDocumentEdges(image) ??
+        return detectDocumentEdges(image, preview: true) ??
             detectDocumentWithVision(VNImageRequestHandler(cvPixelBuffer: buffer, orientation: orientation))
     }
 
-    private static func detectDocumentEdges(_ image: CIImage) -> DocumentQuad? {
+    private static func detectDocumentEdges(_ image: CIImage, preview: Bool, refineContour: Bool = false) -> DocumentQuad? {
         let extent = image.extent
         guard extent.width > 0, extent.height > 0 else { return nil }
-        let modelSize: CGFloat = 256
+        let maxDimension: CGFloat = preview ? 720 : 1600
+        let scale = min(1, maxDimension / max(extent.width, extent.height))
+        let width = max(2, (extent.width * scale).rounded())
+        let height = max(2, (extent.height * scale).rounded())
         let input = image.transformed(by: CGAffineTransform(translationX: -extent.minX, y: -extent.minY))
-            .transformed(by: CGAffineTransform(scaleX: modelSize / extent.width, y: modelSize / extent.height))
-        let bounds = CGRect(x: 0, y: 0, width: modelSize, height: modelSize)
+            .transformed(by: CGAffineTransform(scaleX: width / extent.width, y: height / extent.height))
+        let bounds = CGRect(x: 0, y: 0, width: width, height: height)
         guard let sample = ciContext.createCGImage(input, from: bounds),
-              let corners = FreeScanOpenCV.documentCorners(sample), corners.count == 4 else { return nil }
+              let corners = FreeScanOpenCV.documentCorners(sample, preview: preview,
+                                                           refineContour: refineContour), corners.count == 4 else { return nil }
         let quad = DocumentQuad(topLeft: corners[0].cgPointValue, topRight: corners[1].cgPointValue,
                                 bottomRight: corners[2].cgPointValue, bottomLeft: corners[3].cgPointValue)
         return quad.isValid ? quad : nil
@@ -211,20 +233,20 @@ enum ImagePipeline {
               let crop = FreeScanOpenCV.rectifyDocument(upright(image),
                                                         corners: quad.points.map { NSValue(cgPoint: $0) }) else { return nil }
         guard let geometry else { return (try? deskewText(crop).image) ?? crop }
-        return refineGeometry(crop, geometry: geometry, allowDewarp: true, allowDeskewFallback: true)
+        let corrected = refineGeometry(crop, geometry: geometry, allowDewarp: true, allowDeskewFallback: true)
+        return resize(corrected, maxDimension: geometry.outputMaxDimension ?? 0)
     }
 
     private static func refineGeometry(_ image: UIImage, geometry: ScanGeometryPolicy, allowDewarp: Bool,
                                        allowDeskewFallback: Bool = false) -> UIImage {
-        let oriented: UIImage
+        // PageScan rectifies the geometry first, then classifies the direction of the result.
+        let flattened = geometry.flattenCurves && allowDewarp
+            ? FreeScanOpenCV.flattenDocument(image) ?? image : image
         if geometry.orientText {
-            let fallback = { allowDeskewFallback ? (try? deskewText(image).image) ?? image : image }
-            oriented = FreeScanOpenCV.orientDocument(image) ?? fallback()
-        } else {
-            oriented = image
+            let fallback = { allowDeskewFallback ? (try? deskewText(flattened).image) ?? flattened : flattened }
+            return FreeScanOpenCV.orientDocument(flattened) ?? fallback()
         }
-        guard geometry.flattenCurves && allowDewarp else { return oriented }
-        return FreeScanOpenCV.flattenDocument(oriented) ?? oriented
+        return flattened
     }
 
     /// Same OpenCV 4.12 HSV mask, morphological close/dilation and Telea repair

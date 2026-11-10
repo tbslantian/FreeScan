@@ -640,6 +640,10 @@ struct ScanEditorView: View {
                 let selectedFilter = filter
                 let shouldRemoveShadows = removeShadowsEnabled
                 let result = await Task.detached(priority: .userInitiated) {
+                    if selectedFilter == .smartHD {
+                        let filtered = ImagePipeline.filtered(source, mode: selectedFilter, removeShadows: shouldRemoveShadows)
+                        return ImagePipeline.resize(filtered, maxDimension: 1600)
+                    }
                     let displayImage = ImagePipeline.resize(source, maxDimension: 1600)
                     return ImagePipeline.filtered(displayImage, mode: selectedFilter, removeShadows: shouldRemoveShadows)
                 }.value

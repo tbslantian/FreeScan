@@ -64,10 +64,13 @@ if __name__ == "__main__":
     parser.add_argument("runtime", type=Path)
     parser.add_argument("output", type=Path)
     parser.add_argument("--reference-ipa", type=Path)
+    parser.add_argument("--android-reference-apk", type=Path)
     args = parser.parse_args()
     try:
         if args.reference_ipa:
-            extract(args.reference_ipa)
+            extract(args.reference_ipa, args.android_reference_apk)
+        elif args.android_reference_apk:
+            parser.error("--android-reference-apk requires --reference-ipa")
         finalize(args.runtime, args.output)
     except (OSError, ValueError, BadZipFile, plistlib.InvalidFileException) as error:
         parser.exit(1, f"{error}\n")

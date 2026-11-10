@@ -29,6 +29,17 @@ int main() {
         field.at<cv::Vec2f>(1, 1)[0] = std::numeric_limits<float>::quiet_NaN();
         expect(freescan::dewarpDocument(image, field).empty(), "A non-finite field must be rejected");
         expect(freescan::dewarpInput(image).size() == cv::Size(side, side), "Wrong model input shape");
+        expect(freescan::contourInput(image).empty(), "The contour brightness gate accepted a white frame");
+
+        const std::array<cv::Point, 4> outline{{{31, 27}, {205, 27}, {205, 208}, {31, 208}}};
+        const std::array<cv::Point2f, 4> corners{{{34.f / 239, 30.f / 239}, {202.f / 239, 30.f / 239},
+                                                 {202.f / 239, 205.f / 239}, {34.f / 239, 205.f / 239}}};
+        cv::Mat probability = cv::Mat::zeros(side, side, CV_32FC1);
+        cv::fillConvexPoly(probability, outline, 0.98);
+        const auto refined = freescan::refineDocumentContour(probability, corners);
+        expect(refined && (*refined)[0].x < corners[0].x, "Matching page contour did not refine its corner");
+        probability.setTo(0.98);
+        expect(!freescan::refineDocumentContour(probability, corners), "An unrelated contour replaced the detected page");
 
         // A backward displacement should straighten a line bowed upward. Use an image larger
         // than the model grid and taller than one tile to catch scaling and row-offset mistakes.

@@ -209,19 +209,66 @@ inline void normalizeQuad(EdgeQuad &quad, cv::Size size) {
         p.y = std::clamp(p.y / (size.height - 1), 0.f, 1.f);
     }
 }
+
+// Refit each accepted segment to the probability ridge inside its edge chain.
+// The two contour traces around a broad ridge otherwise bias intersections
+// toward whichever side happened to yield the longest straight segment.
+inline Line refitProbabilityRidge(const Line &line, cv::Point2f start, cv::Point2f end,
+                                 const cv::Mat &likelihood, float threshold) {
+    const cv::Point2f normal(-line.tangent.y, line.tangent.x);
+    const int radius = std::max(2, cvRound(std::min(likelihood.cols, likelihood.rows) * .018f));
+    ChainFit fit;
+    constexpr int samples = 25;
+    for (int i = 1; i <= samples; ++i) {
+        const auto point = start + (end - start) * (float(i) / (samples + 1));
+        float weight = 0, weightedOffset = 0;
+        for (int offset = -radius; offset <= radius; ++offset) {
+            const auto sample = point + normal * float(offset);
+            const int x = cvRound(sample.x), y = cvRound(sample.y);
+            if (x < 0 || x >= likelihood.cols || y < 0 || y >= likelihood.rows) continue;
+            const float confidence = likelihood.at<uchar>(y, x) - threshold;
+            if (confidence <= 0) continue;
+            weight += confidence;
+            weightedOffset += confidence * offset;
+        }
+        if (weight > 0) fit.add(point + normal * (weightedOffset / weight));
+    }
+    if (fit.count < samples * 2 / 3) return line;
+    const auto refined = fit.endpoints(line.start, line.end);
+    if (std::max(std::abs(cross(line.tangent, refined.start - line.start)),
+                 std::abs(cross(line.tangent, refined.end - line.end))) > radius)
+        return line;
+    return refined;
+}
 } // namespace camScannerEdge
 
-inline std::optional<EdgeQuad> fitCamScannerDocumentEdges(const cv::Mat &probabilities) {
+inline std::optional<EdgeQuad> fitCamScannerDocumentEdges(const cv::Mat &probabilities,
+                                                         cv::Size analysisSize = {}) {
     using namespace camScannerEdge;
     if (probabilities.dims != 2 || probabilities.type() != CV_32FC1 ||
         probabilities.rows < 24 || probabilities.cols < 24 ||
         !cv::checkRange(probabilities, true, nullptr, 0., 1.001))
         return std::nullopt;
+    if (analysisSize.empty()) analysisSize = probabilities.size();
+    if (std::min(analysisSize.width, analysisSize.height) < 10) return std::nullopt;
+
+    // cardCut sends byte probabilities, bilinearly restored to the analysis
+    // frame's aspect ratio, to the line detector.
+    cv::Mat likelihood(probabilities.size(), CV_8UC1);
+    for (int y = 0; y < probabilities.rows; ++y) {
+        const auto *source = probabilities.ptr<float>(y);
+        auto *target = likelihood.ptr<uchar>(y);
+        for (int x = 0; x < probabilities.cols; ++x)
+            target[x] = uchar(std::min(255.f, source[x] * 255.f));
+    }
+    if (analysisSize != likelihood.size())
+        cv::resize(likelihood, likelihood, analysisSize, 0, 0, cv::INTER_LINEAR);
     double peak = 0;
-    cv::minMaxLoc(probabilities, nullptr, &peak);
-    if (peak < .25) return std::nullopt;
+    cv::minMaxLoc(likelihood, nullptr, &peak);
+    if (peak < 63) return std::nullopt;
+    const float threshold = std::max(.18f * 255.f, .32f * float(peak));
     cv::Mat edges;
-    cv::compare(probabilities, std::max(.18, .32 * peak), edges, cv::CMP_GT);
+    cv::compare(likelihood, threshold, edges, cv::CMP_GT);
     const auto edgeCount = size_t(cv::countNonZero(edges));
     if (edgeCount < size_t(std::min(edges.rows, edges.cols)) || edgeCount > edges.total() / 3)
         return std::nullopt;
@@ -248,6 +295,7 @@ inline std::optional<EdgeQuad> fitCamScannerDocumentEdges(const cv::Mat &probabi
     cv::bitwise_not(edges, inverted);
     cv::distanceTransform(inverted, distance, cv::DIST_L2, cv::DIST_MASK_3);
     std::optional<EdgeQuad> best;
+    std::array<Line, 4> bestLines{};
     float bestScore = 0;
     for (size_t a = 0; a < lines.size(); ++a) {
         for (size_t b = a + 1; b < lines.size(); ++b) {
@@ -257,10 +305,12 @@ inline std::optional<EdgeQuad> fitCamScannerDocumentEdges(const cv::Mat &probabi
                                               std::array<size_t, 4>{a, b, d, c},
                                               std::array<size_t, 4>{a, c, b, d}}) {
                         EdgeQuad quad;
-                        const float score = scoreQuad(
-                            {lines[cycle[0]], lines[cycle[1]], lines[cycle[2]], lines[cycle[3]]}, distance, quad);
+                        const std::array<Line, 4> sides{
+                            lines[cycle[0]], lines[cycle[1]], lines[cycle[2]], lines[cycle[3]]};
+                        const float score = scoreQuad(sides, distance, quad);
                         if (score > bestScore) {
                             best = quad;
+                            bestLines = sides;
                             bestScore = score;
                         }
                     }
@@ -268,7 +318,15 @@ inline std::optional<EdgeQuad> fitCamScannerDocumentEdges(const cv::Mat &probabi
             }
         }
     }
-    if (best) normalizeQuad(*best, probabilities.size());
+    if (best) {
+        for (size_t i = 0; i < bestLines.size(); ++i) {
+            bestLines[i] = refitProbabilityRidge(bestLines[i], (*best)[(i + 3) % 4],
+                                                 (*best)[i], likelihood, threshold);
+        }
+        EdgeQuad refined;
+        if (scoreQuad(bestLines, distance, refined) > 0) best = refined;
+        normalizeQuad(*best, analysisSize);
+    }
     return best;
 }
 } // namespace freescan

@@ -25,6 +25,20 @@ static void checkCamScannerEdgeFitter() {
         cv::line(probabilities, a + (b - a) * .57f, b, cv::Scalar(.9), 3);
     }
     expectQuad(freescan::fitCamScannerDocumentEdges(probabilities), corners, 9, 239);
+    const cv::Size analysisSize(276, 416);
+    auto aspectQuad = freescan::fitCamScannerDocumentEdges(probabilities, analysisSize);
+    expectQuad(aspectQuad, corners, 9, 239);
+
+    // A broad confidence ridge must be fitted through its center so the
+    // scan crop does not drift toward the outer edge of the threshold mask.
+    probabilities.setTo(0);
+    const std::array<cv::Point, 4> ridge{{{34, 30}, {205, 30}, {205, 210}, {34, 210}}};
+    for (size_t i = 0; i < ridge.size(); ++i) {
+        cv::line(probabilities, ridge[i], ridge[(i + 1) % ridge.size()], cv::Scalar(.44), 7);
+        cv::line(probabilities, ridge[i], ridge[(i + 1) % ridge.size()], cv::Scalar(.96), 2);
+    }
+    expectQuad(freescan::fitCamScannerDocumentEdges(probabilities, analysisSize), ridge, 5, 239);
+
     probabilities.setTo(0);
     if (freescan::fitCamScannerDocumentEdges(probabilities))
         throw std::runtime_error("Blank edge probabilities became a document");

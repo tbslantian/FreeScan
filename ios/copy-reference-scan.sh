@@ -3,7 +3,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 set -euo pipefail
 
-models=(border.mnn direction.mnn dewarp-b.mnn shadow.mnn)
+extractor="$SRCROOT/porting/extract_camscanner_models.py"
+model_names="$(/usr/bin/python3 "$extractor" --list-models)"
+IFS=$'\n' read -r -d '' -a models <<< "$model_names" || true
 destination="$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/ReferenceScan"
 if [ "${FREESCAN_USE_MNN:-NO}" != YES ]; then
     if [ -d "$destination" ]; then
@@ -19,7 +21,7 @@ fi
 
 mkdir -p "$destination"
 if [ "${FREESCAN_STAGE_MNN_MODELS:-YES}" = YES ]; then
-    /usr/bin/python3 "$SRCROOT/porting/extract_camscanner_models.py" --verify-only
+    /usr/bin/python3 "$extractor" --verify-only
     for name in "${models[@]}"; do
         cp "$SRCROOT/.build/camscanner-models/$name" "$destination/$name"
     done

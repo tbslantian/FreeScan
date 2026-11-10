@@ -55,17 +55,13 @@ int main() {
             points[i] = {paper[i].x / 639.f, paper[i].y / 459.f};
             referenceCorners[i] = cv::Point2f(paper[i]);
         }
-        const auto referenceSize = freescan::rectifiedDocumentSize(referenceCorners, 640);
-        require(referenceSize == cv::Size(534, 388), "Rectification did not match the reference aspect ratio");
-        require(freescan::insetDocumentEdges(referenceCorners, referenceSize), "Corner inset failed");
-        const std::array<cv::Point2f, 4> expected{{{95.877f, 44.238f}, {535.149f, 76.523f},
-                                                  {579.135f, 393.219f}, {56.775f, 402.023f}}};
-        for (size_t i = 0; i < expected.size(); ++i) {
-            require(cv::norm(referenceCorners[i] - expected[i]) < .01, "Inset did not match original ARM64 output");
-        }
+        const auto referenceSize = freescan::rectifiedDocumentSize(referenceCorners);
+        require(referenceSize == cv::Size(540, 392), "Rectification did not match the Android output size");
+        cv::circle(page, paper.front() + cv::Point(2, 2), 3, cv::Scalar(10, 10, 10), cv::FILLED);
         auto crop = freescan::rectifyDocument(page, points);
         require(crop.size() == referenceSize, "Rectification ignored reference output dimensions");
         require(cv::mean(crop)[0] > 237, "Rectified paper kept its surroundings");
+        require(crop.at<cv::Vec3b>(2, 2)[0] < 50, "Rectification lost a marking near the paper corner");
         std::cout<<"All text deskew regression checks passed\n";
         return 0;
     } catch (const std::exception &error) { std::cerr<<error.what()<<'\n';return 1; }

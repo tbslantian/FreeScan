@@ -34,25 +34,22 @@ public:
         if (session_) interpreter_->releaseSession(session_);
     }
 
-    std::vector<float> run(const cv::Mat &bgr, const char *outputName,
+    std::vector<float> run(const cv::Mat &image, const char *outputName,
                            const std::vector<int> &outputShape, float scale, float bias = 0) {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (!session_ || bgr.type() != CV_8UC3) return {};
+        if (!session_ || (image.type() != CV_8UC3 && image.type() != CV_32FC3)) return {};
         auto *input = interpreter_->getSessionInput(session_, nullptr);
         auto *output = interpreter_->getSessionOutput(session_, outputName);
         if (!isFloatScanTensor(input) || !isFloatScanTensor(output)) return {};
 
         MNN::Tensor hostInput(input, MNN::Tensor::CAFFE);
-        if (hostInput.shape() != std::vector<int>{1, 3, bgr.rows, bgr.cols}) return {};
+        if (hostInput.shape() != std::vector<int>{1, 3, image.rows, image.cols}) return {};
         auto *pixels = hostInput.host<float>();
         if (!pixels) return {};
-        const size_t count = bgr.total();
-        for (int y = 0; y < bgr.rows; ++y) {
-            const auto *row = bgr.ptr<cv::Vec3b>(y);
-            for (int x = 0; x < bgr.cols; ++x) {
-                const size_t i = size_t(y) * bgr.cols + x;
-                for (int c = 0; c < 3; ++c) pixels[c * count + i] = row[x][c] * scale + bias;
-            }
+        if (image.type() == CV_8UC3) {
+            writePlanes<cv::Vec3b>(image, pixels, scale, bias);
+        } else {
+            writePlanes<cv::Vec3f>(image, pixels, scale, bias);
         }
 
         if (!input->copyFromHostTensor(&hostInput) || int(interpreter_->runSession(session_)) != 0)
@@ -66,6 +63,18 @@ public:
     }
 
 private:
+    template <typename Pixel>
+    static void writePlanes(const cv::Mat &image, float *output, float scale, float bias) {
+        const size_t count = image.total();
+        for (int y = 0; y < image.rows; ++y) {
+            const auto *row = image.ptr<Pixel>(y);
+            for (int x = 0; x < image.cols; ++x) {
+                const size_t i = size_t(y) * image.cols + x;
+                for (int c = 0; c < 3; ++c) output[c * count + i] = row[x][c] * scale + bias;
+            }
+        }
+    }
+
     std::unique_ptr<MNN::Interpreter> interpreter_;
     MNN::Session *session_ = nullptr;
     std::mutex mutex_;

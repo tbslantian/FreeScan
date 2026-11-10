@@ -3,8 +3,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 set -euo pipefail
 
-if [ "$#" -ne 1 ] || [ "$(uname -s)" != Darwin ]; then
-    echo "Usage on macOS: bash ios/build-reference-scan.sh <reference.ipa | --runtime-only>" >&2
+if [ "$(uname -s)" != Darwin ] || { [ "$#" -ne 2 ] && { [ "$#" -ne 1 ] || [ "$1" != --runtime-only ]; }; }; then
+    echo "Usage on macOS: bash ios/build-reference-scan.sh <reference.ipa> <android-reference.apk> | --runtime-only" >&2
     exit 2
 fi
 
@@ -14,7 +14,7 @@ if [ "$1" = --runtime-only ]; then
     stage_models=NO
     mkdir -p "$root/.build/camscanner-models"
 else
-    python3 "$root/porting/extract_camscanner_models.py" "$1"
+    python3 "$root/porting/extract_camscanner_models.py" "$1" --android-reference-apk "$2"
 fi
 revision=7e3c6fb5225d3ccf22807ee641332669df34650d
 work="$root/.build/mnn-work"

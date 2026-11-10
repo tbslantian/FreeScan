@@ -71,6 +71,7 @@ enum ScanFilter: String, CaseIterable, Hashable, Identifiable {
 struct ScanGeometryPolicy: Codable {
     let orientText: Bool
     let flattenCurves: Bool
+    var outputMaxDimension: Int? = nil
 
     static var document: Self {
         Self(orientText: UserDefaults.standard.object(forKey: "scanAutoOrientText") as? Bool ?? true,

@@ -5,7 +5,7 @@ This is the native SwiftUI companion project for the Android FreeScan app. It ta
 ## Features
 
 - Document and book capture process a shot and open its editor automatically. Camera and photo import share four-corner detection and OpenCV homography correction. The editor keeps the source frame and corners for recropping.
-- The optional [reference scan build](porting/CAMSCANNER_IOS_PORT.md) runs the verified MNN edge, page orientation, curved-page and shadow models locally. The standard build uses HED and Apple Vision for edges. The editor also offers OpenCV text-line deskew.
+- The optional [reference scan build](porting/CAMSCANNER_IOS_PORT.md) runs the verified MNN edge, page orientation, curved-page, shadow and Smart HD models locally. The standard build uses HED and Apple Vision for edges. The editor also offers OpenCV text-line deskew.
 - Nine certificate/document framing templates with live camera guides.
 - Multi-page editing includes page selection, rotation, manual crop and the new scan filters. Preview, export and print share the filter pipeline. The watermark and handwriting filters use local QR/footer and colored-ink repair.
 - Single or multiple PDF import from Files into a persistent app-local library, editable image pages, PDF/JPEG export with custom names, Files sharing, and AirPrint.
