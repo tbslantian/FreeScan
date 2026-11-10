@@ -86,9 +86,10 @@ inline int scanHalf(int value) {
 }
 
 // Reconstruct the reference's contrast-aware box unsharp mask.
-inline void sharpenScanEdges(cv::Mat &image) {
+inline void sharpenScanEdges(cv::Mat &image, int strength = 4) {
     int side = std::min(image.cols, image.rows);
-    int window = side > 1600 ? 15 : side > 400 ? 7 : 3;
+    int window = strength * (side > 1600 ? 4 : side > 400 ? 2 : 1) - 1;
+    if (window <= 1) return;
     cv::Mat blurred;
     cv::blur(image, blurred, cv::Size(window, window), cv::Point(-1, -1), cv::BORDER_REFLECT_101);
     cv::parallel_for_(cv::Range(0, image.rows), [&](const cv::Range &rows) {
@@ -105,8 +106,7 @@ inline void sharpenScanEdges(cv::Mat &image) {
     });
 }
 
-inline cv::Mat scanColorSharpen(const cv::Mat &bgr) {
-    auto output = bgr.clone();
+inline void boostScanSaturation(cv::Mat &output) {
     cv::parallel_for_(cv::Range(0, output.rows), [&](const cv::Range &rows) {
         for (int y = rows.start; y < rows.end; ++y) {
             auto *pixels = output.ptr<cv::Vec3b>(y);
@@ -119,6 +119,11 @@ inline cv::Mat scanColorSharpen(const cv::Mat &bgr) {
             }
         }
     });
+}
+
+inline cv::Mat scanColorSharpen(const cv::Mat &bgr) {
+    auto output = bgr.clone();
+    boostScanSaturation(output);
     sharpenScanEdges(output);
     return output;
 }

@@ -1,5 +1,7 @@
 """Extract the verified scan tensors from local reference app packages."""
 
+from __future__ import annotations
+
 import argparse
 import hashlib
 from pathlib import Path
